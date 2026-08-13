@@ -252,15 +252,15 @@ networkPolicy:
   enabled: true
   allowIngressFromIngressController: true
   # NOT in §3's schema - §3 says "deny cross-namespace ingress except from the
-  # ingress controller" but never names which namespace/labels identify it, and no
-  # ingress controller has been installed or named anywhere in idp's docs yet
-  # (confirmed - see chart README). Parameterized rather than hardcoded so it can be
-  # set correctly once idp-cluster-baseline actually picks/installs one; defaults to
-  # the ingress-nginx project's own conventional namespace label as a reasonable
-  # placeholder, not a confirmed value.
+  # ingress controller" but never named which namespace/labels identify it. Was an
+  # unconfirmed `ingress-nginx` placeholder guess until 2026-08-13, when
+  # gitops-cluster-dev/10-crds-operators/contour/ was actually built and
+  # live-verified on kind-dev - the cluster's real ingress controller is Contour
+  # (namespace `projectcontour`), not ingress-nginx. Parameterized rather than
+  # hardcoded regardless, since a different cluster could still run something else.
   ingressControllerNamespaceSelector:
     matchLabels:
-      kubernetes.io/metadata.name: ingress-nginx
+      kubernetes.io/metadata.name: projectcontour
 
   # NOT in §3's schema - added 2026-08-13. The raw escape hatch below
   # (extraIngressRules/extraEgressRules) requires knowing the actual K8s

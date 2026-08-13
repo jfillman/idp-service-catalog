@@ -51,11 +51,11 @@ few things as genuinely open. This is where those got resolved, concretely:
 - **`configMaps:`/`volumes:` entries need a `mountPath`.** §3's `volumes:`
   entries already had one; `configMaps:` entries didn't (defaults to
   `/config/<name>`) - added for consistency, not a new idiom.
-- **`networkPolicy.ingressControllerNamespaceSelector` is a placeholder.** No
-  ingress controller has been installed or named anywhere in idp's docs yet;
-  this defaults to the `ingress-nginx` project's conventional namespace label
-  but is not a confirmed value - update it once `idp-cluster-baseline`
-  actually picks one.
+- **`networkPolicy.ingressControllerNamespaceSelector` - resolved 2026-08-13,
+  no longer a placeholder.** `gitops-cluster-dev/10-crds-operators/contour/` was
+  built and live-verified on `kind-dev` this same day - the cluster's real
+  ingress controller is Contour, namespace `projectcontour`, not the
+  `ingress-nginx` guess this defaulted to before. Updated to match.
 - **`attachedResourceApiVersion: catalog.idp.io/v1alpha1` is a placeholder.**
   None of the `components:`/`slos:` XRDs exist yet (see `idp-service-catalog`'s
   top-level README) - this is this chart's own guess at the eventual API
