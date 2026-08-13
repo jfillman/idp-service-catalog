@@ -1,0 +1,125 @@
+# Rendered by function-go-templating-slo, using double-angle-bracket delimiters
+# (see composition.yaml for why those and not ai-rollout's square brackets) -
+# NOTE: never write two literal `<` or `>` characters adjacent to each other
+# anywhere in this file outside a real action, including in comments - the
+# lexer scans raw text for the delimiter pair regardless of YAML comment
+# syntax, and an accidental empty action fails the whole render.
+#
+# Recording-rule METRIC NAMES are generic and shared cluster-wide
+# (slo:sli_error_ratio<window>, the standard Prometheus level:metric:operation
+# recording-rule convention) - per-XR identity comes from the slo/service/
+# namespace LABELS, not the metric name. `namespace` is included specifically
+# because two different apps could both name an SLO entry the same thing (e.g.
+# "availability") - slo+service alone isn't enough to disambiguate cluster-wide.
+#
+# `release: kube-prometheus-stack` on the PrometheusRule itself is required, not
+# decorative: kind-dev's live Prometheus CR has
+# ruleSelector.matchLabels.release=kube-prometheus-stack (verified live), so a
+# PrometheusRule missing that label is silently never loaded.
+#
+# Every expr/summary/description value that embeds a dynamic string (PromQL
+# label matchers contain literal `"`) is built via printf then emitted through
+# `| toJson` rather than interpolated into a hand-quoted YAML string - toJson
+# supplies correct escaping AND keeps the whole value on one line, avoiding
+# YAML block-scalar indentation entirely.
+<<- $spec := .observed.composite.resource.spec >>
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $xrNamespace := .observed.composite.resource.metadata.namespace >>
+<<- $service := $spec.service >>
+<<- $indicator := $spec.indicator >>
+<<- $objective := $spec.objective >>
+<<- $complianceWindow := $spec.window >>
+<<- $burnRates := $spec.alerting.burnRates >>
+
+# Backstop for the XRD's own CEL validation (x-kubernetes-validations in
+# xrds/slo.yaml) - in case CEL enforcement isn't active on the installed
+# Crossplane version, a missing type-required field fails loudly here instead
+# of silently producing a broken query.
+<<- if eq $indicator.type "availability" >>
+  <<- if not $indicator.errorFilter >>
+    <<- fail "indicator.type=availability requires indicator.errorFilter" >>
+  <<- end >>
+<<- else if eq $indicator.type "latency" >>
+  <<- if not $indicator.latencyThreshold >>
+    <<- fail "indicator.type=latency requires indicator.latencyThreshold" >>
+  <<- end >>
+<<- else >>
+  <<- fail (printf "indicator.type must be availability or latency, got %q" $indicator.type) >>
+<<- end >>
+
+# Every distinct window used by any burnRates entry, deduped - each gets one
+# fast (1m) recording rule. spec.window (typically 30d) is handled separately
+# below on a slower cadence, since a 30d rate() range query doesn't meaningfully
+# change minute-to-minute.
+<<- $burnWindows := list >>
+<<- range $burnRates >>
+<<- $burnWindows = append $burnWindows .shortWindow >>
+<<- $burnWindows = append $burnWindows .longWindow >>
+<<- end >>
+<<- $burnWindows = $burnWindows | uniq >>
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: <<$xrName>>-slo
+  labels:
+    release: kube-prometheus-stack
+    slo.idp.io/name: "<<$xrName>>"
+    slo.idp.io/service: "<<$service>>"
+  annotations:
+    <<setResourceNameAnnotation "prometheusrule">>
+spec:
+  groups:
+    - name: <<$xrName>>-recording-burn
+      interval: 1m
+      rules:
+<<- range $w := $burnWindows >>
+<<- $expr := "" >>
+<<- if eq $indicator.type "availability" >>
+<<- $expr = printf "sum(rate(%s{%s,%s}[%s])) / sum(rate(%s{%s}[%s]))" $indicator.metric $indicator.totalFilter $indicator.errorFilter $w $indicator.metric $indicator.totalFilter $w >>
+<<- else >>
+<<- $expr = printf "1 - (sum(rate(%s_bucket{%s,le=%q}[%s])) / sum(rate(%s_count{%s}[%s])))" $indicator.metric $indicator.totalFilter $indicator.latencyThreshold $w $indicator.metric $indicator.totalFilter $w >>
+<<- end >>
+        - record: slo:sli_error_ratio<<$w>>
+          labels:
+            slo: "<<$xrName>>"
+            service: "<<$service>>"
+            namespace: "<<$xrNamespace>>"
+          expr: <<$expr | toJson>>
+<<- end >>
+
+    - name: <<$xrName>>-recording-compliance
+      interval: 15m
+      rules:
+<<- $complianceExpr := "" >>
+<<- if eq $indicator.type "availability" >>
+<<- $complianceExpr = printf "sum(rate(%s{%s,%s}[%s])) / sum(rate(%s{%s}[%s]))" $indicator.metric $indicator.totalFilter $indicator.errorFilter $complianceWindow $indicator.metric $indicator.totalFilter $complianceWindow >>
+<<- else >>
+<<- $complianceExpr = printf "1 - (sum(rate(%s_bucket{%s,le=%q}[%s])) / sum(rate(%s_count{%s}[%s])))" $indicator.metric $indicator.totalFilter $indicator.latencyThreshold $complianceWindow $indicator.metric $indicator.totalFilter $complianceWindow >>
+<<- end >>
+        - record: slo:sli_error_ratio<<$complianceWindow>>
+          labels:
+            slo: "<<$xrName>>"
+            service: "<<$service>>"
+            namespace: "<<$xrNamespace>>"
+          expr: <<$complianceExpr | toJson>>
+
+    - name: <<$xrName>>-alerting
+      rules:
+<<- range $br := $burnRates >>
+<<- $threshold := printf "%v * (1 - %v/100)" $br.factor $objective >>
+<<- $alertExpr := printf "slo:sli_error_ratio%s{slo=%q,service=%q,namespace=%q} > (%s) and slo:sli_error_ratio%s{slo=%q,service=%q,namespace=%q} > (%s)" $br.shortWindow $xrName $service $xrNamespace $threshold $br.longWindow $xrName $service $xrNamespace $threshold >>
+<<- $summary := printf "%s is burning its %s error budget too fast (%s)" $service $indicator.type $br.severity >>
+<<- $description := printf "{{ $labels.slo }}/{{ $labels.service }}: error ratio over %s and %s both exceed %vx the allowed burn rate for a %v%% objective over %s. Current %s ratio is {{ $value | humanizePercentage }}." $br.shortWindow $br.longWindow $br.factor $objective $complianceWindow $br.shortWindow >>
+        - alert: <<$xrName>>-burn-<<$br.severity>>
+          for: 2m
+          labels:
+            severity: "<<$br.severity>>"
+            slo: "<<$xrName>>"
+            service: "<<$service>>"
+            namespace: "<<$xrNamespace>>"
+          annotations:
+            summary: <<$summary | toJson>>
+            description: <<$description | toJson>>
+          expr: <<$alertExpr | toJson>>
+<<- end >>

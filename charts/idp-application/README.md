@@ -9,12 +9,14 @@ one `values.yaml`, plus a raw `extraManifests:` escape hatch. Built against
 §3 - that doc is the schema's source of truth for the original Embedded/Attached
 tiers; `values.yaml` in this chart documents it field-by-field, including a
 handful of fields §3 didn't spell out. A second pass (ServiceAccount, Job,
-CronJob, ServiceMonitor, `extraManifests:`) and a third (configMaps:/secrets:
-consumption modes, below) went beyond §3 entirely - not part of the original
-schema, called out separately below. Real Helm chart, not pseudocode - `helm
-lint`/`helm template` verified against five fixtures (minimal, full-featured
-incl. blueGreen/CronJob/Job/ServiceMonitor/extraManifests/every configMap-secret
-consumption mode, a dedicated configMaps/secrets consumption-mode fixture, an
+CronJob, ServiceMonitor, `extraManifests:`) went beyond §3 entirely; a third
+(configMaps:/secrets: consumption modes) and fourth (simplified NetworkPolicy
+rules) folded back into §3's schema, since both are genuine additions to
+fields §3 already specifies rather than new resource kinds - each pass called
+out separately below. Real Helm chart, not pseudocode - `helm lint`/`helm
+template` verified against six fixtures (minimal, full-featured incl.
+blueGreen/CronJob/Job/ServiceMonitor/extraManifests, a dedicated configMaps/
+secrets consumption-mode fixture, a dedicated NetworkPolicy fixture, an
 `appType: infra` standalone-component release with no workload, and that same
 infra release with a CronJob that supplies its own image) before any pass was
 called done.
@@ -186,6 +188,49 @@ a ConfigMap created outside this chart, which is exactly what a Kustomize
   fix is a controller like Stakater's Reloader watching the rendered Secret
   itself, not a render-time checksum) - not solved here, flagged rather than
   silently left looking closed.
+
+## Simplified NetworkPolicy rules (2026-08-13, fourth pass)
+
+The existing escape hatch (`extraIngressRules`/`extraEgressRules`, raw
+`NetworkPolicyIngressRule`/`EgressRule` passthrough) works but requires knowing
+the real K8s `NetworkPolicyPeer`/`NetworkPolicyPort` shape - nested
+`podSelector`/`namespaceSelector`/`ipBlock`, ports as `{protocol, port}`
+objects. Not simple for the overwhelmingly common case: "let this other
+namespace (optionally narrowed to some pods) or this CIDR reach me on this
+port." `allowIngressFrom:`/`allowEgressTo:` (same shape both directions) cover
+that case flatly:
+
+```yaml
+networkPolicy:
+  allowIngressFrom:
+    - namespace: app-payments-prod
+      ports: [8080]
+    - namespace: app-payments-prod
+      podLabels: {app: worker}   # ANDed with namespace - narrows further
+      ports: [8080, 9090]
+    - cidr: 10.0.0.0/8            # external peer, instead of namespace/podLabels
+      ports: [5432]
+```
+
+- `namespace:` resolves via the auto-populated `kubernetes.io/metadata.name`
+  label (every namespace gets one, k8s 1.21+) - the exact same mechanism
+  already used for `networkPolicy.ingressControllerNamespaceSelector`, not a
+  new idiom.
+- `ports:` is bare integers, TCP assumed - the dominant real-world case. UDP/
+  SCTP, or multiple ORed peers in one rule, still need
+  `extraIngressRules`/`extraEgressRules` - not reinvented here, both escape
+  hatches coexist with the new fields.
+- Each entry renders as its own self-contained rule (K8s ORs separate `ingress[]`/
+  `egress[]` rules together), so entries never interact with each other or with
+  the default same-namespace/ingress-controller rule.
+- `namespace:`/`cidr:` are mutually exclusive per entry -
+  `idp-application.networkPolicyPeer` fails fast if an entry sets both or
+  neither, same fail-fast instinct as every other lookup/validation helper in
+  this chart (`componentKind`, `configMapObjectName`, `resolveAs`).
+- `allowEgressTo` (like `extraEgressRules` before it) correctly flips
+  `policyTypes` to include `Egress` - verified live that the default,
+  `allowEgressTo`-empty case is byte-identical to before this pass (no
+  behavior change for existing releases that don't use the new fields).
 
 ## Not built yet
 

@@ -1,0 +1,59 @@
+# Pipeline shape matches ai-rollout/crossplane/composition/composition.yaml
+# (render step + function-auto-ready), but with its OWN function-go-templating
+# registration (function-go-templating-slo, see
+# gitops-cluster-dev/10-crds-operators/crossplane/function-slo-templates.yaml)
+# instead of reusing the shared `function-go-templating` + `mount-templates`
+# mount the ai-rollout Application Composition already owns - that mount's
+# single ConfigMap holds ai-rollout's own 4 files (rollout/service/
+# analysistemplate/configmap), all keyed on spec.parameters.* fields an SLO XR
+# doesn't have. Pointing a second Composition's dirPath at that same mount
+# would render those 4 templates against every SLO XR too.
+#
+# Delimiters: << >> instead of ai-rollout's [[ ]]. Two reasons, not one:
+#   1. PromQL range-vector syntax needs literal `[5m]` right next to templated
+#      output - `[[ $w ]]` next to a literal `[` creates a 3-bracket run
+#      ([[[) that Go's template lexer misparses.
+#   2. Prometheus's OWN alert-annotation templating ({{ $value }},
+#      {{ $labels.x }}) must reach the rendered PrometheusRule completely
+#      literally, for Alertmanager to evaluate at firing time - not for this
+#      templating pass to consume. `{{ }}` is exactly Go's default delimiter,
+#      so it has to be something else; `<< >>` also happens to dodge
+#      Grafana dashboard JSON's legacy `[[var]]` substitution syntax, which
+#      `[[ ]]` would not.
+#
+# Live-verified quirk (kind-dev, 2026-08-13): `kubectl get functions.pkg.
+# crossplane.io function-go-templating-slo` shows Healthy: False - "cannot
+# resolve package dependencies: ... node xpkg.crossplane.io/crossplane-contrib/
+# function-go-templating already exists" - Crossplane's package-manager lock
+# graph objects to two Function objects pointing at the identical package
+# reference as the existing `function-go-templating`. Confirmed functionally
+# harmless: the runtime pod comes up and the pipeline step executes correctly
+# regardless (proven end-to-end - a real SLO XR composed a working
+# PrometheusRule + dashboard ConfigMap, and Prometheus loaded and evaluated
+# the rules against real data). Cosmetic package-manager bookkeeping only, not
+# a functional blocker - not otherwise fixed/worked around this pass.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: slos.catalog.idp.io
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.idp.io/v1alpha1
+    kind: SLO
+  mode: Pipeline
+  pipeline:
+    - step: render-slo-resources
+      functionRef:
+        name: function-go-templating-slo
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: FileSystem
+        fileSystem:
+          dirPath: /templates
+        delims:
+          left: "<<"
+          right: ">>"
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready

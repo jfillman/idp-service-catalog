@@ -261,6 +261,37 @@ networkPolicy:
   ingressControllerNamespaceSelector:
     matchLabels:
       kubernetes.io/metadata.name: ingress-nginx
+
+  # NOT in §3's schema - added 2026-08-13. The raw escape hatch below
+  # (extraIngressRules/extraEgressRules) requires knowing the actual K8s
+  # NetworkPolicyPeer/NetworkPolicyPort shape (nested podSelector/
+  # namespaceSelector/ipBlock, ports as {protocol, port} objects) - real, but
+  # not simple for the overwhelmingly common case of "let this other namespace/
+  # CIDR reach me on this port". allowIngressFrom/allowEgressTo cover that case
+  # with a flat shape; each entry becomes its own self-contained ingress/egress
+  # rule (K8s ORs separate rules together, so entries never interact with each
+  # other or with the default same-namespace/ingress-controller rule above).
+  allowIngressFrom: []
+  # - namespace: app-payments-prod  # matches every pod in this namespace, via the
+  #                                  # auto-populated kubernetes.io/metadata.name
+  #                                  # label - same mechanism already used for
+  #                                  # ingressControllerNamespaceSelector above.
+  #   podLabels: {app: worker}      # optional - ANDed with namespace: (a real K8s
+  #                                  # NetworkPolicyPeer can combine both selectors
+  #                                  # on one peer), further restricts to pods
+  #                                  # carrying these labels within that namespace.
+  #   ports: [8080, 9090]           # optional - bare port numbers, TCP assumed
+  #                                  # (the overwhelming common case); omit for
+  #                                  # "all ports". Need UDP/SCTP or multiple ORed
+  #                                  # peers in one rule? Use extraIngressRules
+  #                                  # instead - not reinvented here.
+  # - cidr: 10.0.0.0/8              # an external peer instead of namespace/
+  #                                  # podLabels - mutually exclusive with both,
+  #                                  # fails fast if an entry sets more than one
+  #                                  # peer kind (idp-application.networkPolicyPeer).
+  #   ports: [5432]
+  allowEgressTo: [] # same shape as allowIngressFrom
+
   extraIngressRules: []
   extraEgressRules: []
 
@@ -269,10 +300,27 @@ components: [] # Attached - see "Rendering mechanism" in §3
 #   name: cache
 #   spec: {size: small}
 
-slos: [] # Attached
+slos: [] # Attached - rendered into the `SLO` XRD (idp-service-catalog/xrds/slo.yaml)
 # - name: availability
+#   service: checkout-api        # PromQL label-matcher value - required
 #   objective: 99.9
-#   indicator: {}
+#   window: 30d                   # optional, defaults to 30d
+#   indicator:
+#     type: availability           # or: latency
+#     metric: http_requests_total
+#     totalFilter: 'service="checkout-api"'
+#     errorFilter: 'code=~"5.."'   # required when type: availability
+#     # latencyThreshold: "0.3"    # required when type: latency, instead of errorFilter
+#   alerting:                      # optional - defaults to the standard 2%/1h + 5%/6h
+#     burnRates:                   # Google SRE workbook burn-rate tiers
+#       - severity: critical
+#         shortWindow: 5m
+#         longWindow: 1h
+#         factor: 14.4
+#       - severity: warning
+#         shortWindow: 30m
+#         longWindow: 6h
+#         factor: 6
 
 # NOT in §3's schema. The generic components:/slos: range loop (§3 "Rendering
 # mechanism") needs a type -> {kind, apiVersion} lookup table, and the doc's own v1

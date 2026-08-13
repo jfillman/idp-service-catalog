@@ -1,0 +1,187 @@
+# First XRD in the catalog - see idp/docs/service-catalog-design.md Item 4.
+#
+# apiextensions.crossplane.io/v2 (not v1) for real namespaced-XR support, same as
+# ai-rollout/crossplane/xrd/application.yaml's own note on why v1 is wrong here.
+#
+# Fields sit FLAT under spec.* (not nested under spec.parameters like the
+# ai-rollout prototype's Application XRD) because idp-application's own
+# templates/attached/slos.yaml already toYaml's each `slos:` values entry
+# straight under spec:, alongside spec.environmentRef. kind/plural/group match
+# what _helpers.tpl already hardcodes (type: slo -> kind: SLO) and what
+# values.yaml already sets (attachedResourceApiVersion: catalog.idp.io/v1alpha1).
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: slos.catalog.idp.io
+spec:
+  group: catalog.idp.io
+  names:
+    kind: SLO
+    plural: slos
+    singular: slo
+    shortNames:
+      - slo
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - environmentRef
+                - service
+                - objective
+                - indicator
+              properties:
+                environmentRef:
+                  type: object
+                  description: >-
+                    Names the owning ApplicationEnvironment XR (app+cluster+env
+                    identity) this SLO belongs to. Labeling/audit only - not a
+                    live lookup, same convention as every other Attached-tier
+                    XRD in this catalog.
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+
+                service:
+                  type: string
+                  description: >-
+                    Value every generated PromQL query matches against the
+                    `service` label. Required (not derived from the XR name)
+                    so a query is never accidentally left unscoped. Also used
+                    literally in the generated PrometheusRule/dashboard, so
+                    it's pattern-constrained to a safe PromQL/JSON charset.
+                  minLength: 1
+                  pattern: '^[a-zA-Z0-9_.-]+$'
+
+                objective:
+                  type: number
+                  description: Target SLO percentage, e.g. 99.9 for 99.9%.
+                  minimum: 0
+                  exclusiveMinimum: true
+                  maximum: 100
+
+                window:
+                  type: string
+                  description: >-
+                    Rolling compliance window for the error-budget calculation
+                    and the dashboard's budget-remaining panel. The default
+                    alerting.burnRates factors below are calibrated for the
+                    default window (30d) per the Google SRE workbook's
+                    factor = budget_fraction / (alert_window / compliance_window)
+                    formula - override window without recomputing factor and
+                    the effective budget-burn-per-alert shifts proportionally.
+                  default: "30d"
+                  pattern: '^([0-9]+(ms|s|m|h|d|w|y))+$'
+
+                indicator:
+                  type: object
+                  description: >-
+                    Flat schema (K8s structural schemas don't support a real
+                    oneOf with different properties per branch) with CEL rules
+                    enforcing the per-type required field, same pattern as
+                    cert-manager's Issuer/ExternalDNS-style discriminated
+                    configs. errorFilter is required when type=availability;
+                    latencyThreshold is required when type=latency. The
+                    Composition's PrometheusRule template also `fail`s on a
+                    missing type-required field as a backstop, in case CEL
+                    validation isn't enforced on the installed Crossplane
+                    version.
+                  required:
+                    - type
+                    - metric
+                    - totalFilter
+                  properties:
+                    type:
+                      type: string
+                      enum: [availability, latency]
+                    metric:
+                      type: string
+                      description: >-
+                        Base metric name. For availability, a counter (e.g.
+                        http_requests_total). For latency, the histogram's
+                        base name without the _bucket/_count/_sum suffix.
+                      minLength: 1
+                    totalFilter:
+                      type: string
+                      description: PromQL label-matcher fragment selecting all eligible events.
+                      minLength: 1
+                    errorFilter:
+                      type: string
+                      description: >-
+                        PromQL label-matcher fragment selecting bad/error
+                        events. Required when type == availability.
+                      minLength: 1
+                    latencyThreshold:
+                      type: string
+                      description: >-
+                        Latency threshold in seconds, as a string, e.g. "0.3".
+                        Must exactly match one of the target histogram's
+                        configured `le` bucket boundaries as Prometheus renders
+                        it - a mismatch produces a recording rule matching zero
+                        series (empty result, not zero/NaN), which then never
+                        alerts and never errors. Can't be validated at the XRD
+                        level since bucket boundaries are an external fact
+                        about the instrumented service. Required when
+                        type == latency.
+                      minLength: 1
+                  x-kubernetes-validations:
+                    - rule: "self.type != 'availability' || has(self.errorFilter)"
+                      message: "errorFilter is required when indicator.type == availability"
+                    - rule: "self.type != 'latency' || has(self.latencyThreshold)"
+                      message: "latencyThreshold is required when indicator.type == latency"
+
+                alerting:
+                  type: object
+                  default: {}
+                  properties:
+                    burnRates:
+                      type: array
+                      description: >-
+                        Multi-window multi-burn-rate alert tiers (Google SRE
+                        workbook pattern): an alert fires only when BOTH
+                        shortWindow's and longWindow's recording-rule error
+                        ratio exceed factor * (1 - objective/100)
+                        simultaneously. Defaults are the workbook's canonical
+                        2%-budget/1h and 5%-budget/6h tiers for a 30d window.
+                      minItems: 1
+                      default:
+                        - severity: critical
+                          shortWindow: "5m"
+                          longWindow: "1h"
+                          factor: 14.4
+                        - severity: warning
+                          shortWindow: "30m"
+                          longWindow: "6h"
+                          factor: 6
+                      items:
+                        type: object
+                        required:
+                          - severity
+                          - shortWindow
+                          - longWindow
+                          - factor
+                        properties:
+                          severity:
+                            type: string
+                            enum: [critical, warning, info]
+                          shortWindow:
+                            type: string
+                            pattern: '^([0-9]+(ms|s|m|h|d|w|y))+$'
+                          longWindow:
+                            type: string
+                            pattern: '^([0-9]+(ms|s|m|h|d|w|y))+$'
+                          factor:
+                            type: number
+                            minimum: 0
+                            exclusiveMinimum: true
+          required: ["spec"]

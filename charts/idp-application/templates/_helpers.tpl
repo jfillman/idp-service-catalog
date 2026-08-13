@@ -319,3 +319,50 @@ Usage: {{ $container := fromYaml (include "idp-application.batchContainer" (dict
 {{- if $volumeMounts -}}{{- $_ := set $container "volumeMounts" $volumeMounts -}}{{- end -}}
 {{- $container | toYaml -}}
 {{- end -}}
+
+{{/*
+idp-application.networkPolicyPeer - builds one NetworkPolicyPeer from an
+allowIngressFrom:/allowEgressTo: entry. Exactly one of namespace:/cidr: is
+required - namespace: resolves via the auto-populated kubernetes.io/metadata.name
+label (every namespace gets one since k8s 1.21+), the same mechanism already used
+for networkPolicy.ingressControllerNamespaceSelector; podLabels: (only meaningful
+alongside namespace:) is ANDed onto the same peer as a real K8s NetworkPolicyPeer
+can combine namespaceSelector + podSelector on one object. Fails fast on both/
+neither set, matching this chart's established instinct (componentKind,
+configMapObjectName, resolveAs) rather than silently picking one or rendering
+nothing.
+
+Usage: {{ include "idp-application.networkPolicyPeer" . }}
+*/}}
+{{- define "idp-application.networkPolicyPeer" -}}
+{{- if and .cidr .namespace -}}
+{{- fail "networkPolicy allowIngressFrom/allowEgressTo entry sets both namespace: and cidr: - set exactly one (namespace: for an in-cluster peer, cidr: for an external one)" -}}
+{{- end -}}
+{{- $peer := dict -}}
+{{- if .cidr -}}
+{{- $_ := set $peer "ipBlock" (dict "cidr" .cidr) -}}
+{{- else if .namespace -}}
+{{- $_ := set $peer "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" .namespace)) -}}
+{{- if .podLabels -}}{{- $_ := set $peer "podSelector" (dict "matchLabels" .podLabels) -}}{{- end -}}
+{{- else -}}
+{{- fail "networkPolicy allowIngressFrom/allowEgressTo entry needs either namespace: or cidr:" -}}
+{{- end -}}
+{{- $peer | toYaml -}}
+{{- end -}}
+
+{{/*
+idp-application.networkPolicyPorts - converts an allowIngressFrom:/allowEgressTo:
+entry's `ports: [8080, 9090]` (bare port numbers) into the real NetworkPolicyPort
+list shape, TCP assumed - the overwhelming common case, and the whole point of
+this being simpler than extraIngressRules/extraEgressRules. UDP/SCTP genuinely
+need the raw escape hatch instead, not reinvented here.
+
+Usage: {{ include "idp-application.networkPolicyPorts" . }}
+*/}}
+{{- define "idp-application.networkPolicyPorts" -}}
+{{- $ports := list -}}
+{{- range .ports -}}
+{{- $ports = append $ports (dict "protocol" "TCP" "port" .) -}}
+{{- end -}}
+{{- $ports | toYaml -}}
+{{- end -}}
