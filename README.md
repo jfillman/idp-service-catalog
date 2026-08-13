@@ -20,22 +20,26 @@ from the [`ai-rollout`](https://github.com/jfillman/ai-rollout) prototype
 [jfillman/idp#8](https://github.com/jfillman/idp/pull/8). See each
 function's own README for the full detail.
 
-**`idp-application` Helm chart — built, `helm lint`/`helm template` verified
-against fixture values (minimal, full-featured incl. blueGreen, and an
-`appType: infra` standalone-component release).** Renders §3's full schema
-(Argo Rollout, Service, ConfigMaps, ExternalSecret, PVCs, HPA,
+**`idp-application` Helm chart — built, and as of 2026-08-13 live-verified
+end-to-end on a real cluster, not just `helm lint`/`helm template`.** Renders
+§3's full schema (Argo Rollout, Service, ConfigMaps, ExternalSecret, PVCs, HPA,
 PodDisruptionBudget, NetworkPolicy, AnalysisTemplates, `components:`/`slos:` as
-generic Crossplane XRs) plus a deliberate v1 resource-coverage pass beyond §3
-entirely: a dedicated ServiceAccount (+ imagePullSecrets), `jobs:`/`cronJobs:`
-batch tasks (sharing the main workload's env/secrets/config automatically), a
-ServiceMonitor (kube-prometheus-stack is already installed cluster-side), and
-a raw `extraManifests:` escape hatch. See `charts/idp-application/README.md`
-for the concrete decisions made in both passes — including two real bugs
-`helm lint`/`helm template` caught live: an `envName`/`env` naming collision,
-and Sprig's `default` silently discarding explicit `false`/`0` values (fixed
-with `hasKey`-based checks) — and the placeholders still pending confirmation
-(ingress-controller namespace selector, attached-resource API group,
-ServiceMonitor selector label, who provisions the image-pull Secret).
+generic Crossplane XRs) plus real resource-coverage/simplification passes
+beyond §3: ServiceAccount, `jobs:`/`cronJobs:`, ServiceMonitor,
+`extraManifests:`, configMap/secret consumption modes, simplified NetworkPolicy
+rules. Live-verification pass: `kind-dev` rebuilt from scratch under real
+GitOps management (see `gitops-cluster-dev`), `widget-api` migrated onto this
+chart for real off the standalone `ai-rollout` prototype's own Composition,
+full test pass against real cluster state (NetworkPolicy enforcement,
+ServiceMonitor scraping, a real canary rollout with a Prometheus-backed
+AnalysisRun, checksum-triggered revisions) - found and fixed two real bugs
+(`rollout.canaryAnalysis` didn't exist at all; `analysisTemplates:` silently
+dropped `args:`). See `charts/idp-application/README.md` for the full detail
+of every pass, including the earlier fixture-only bugs (an `envName`/`env`
+naming collision, Sprig's `default` silently discarding explicit `false`/`0`).
+The ingress-controller namespace selector is resolved too now (Contour,
+confirmed live) - remaining open items: attached-resource API group, who
+provisions the image-pull Secret.
 
 **`SLO` XRD + Composition real bugs found live on `kind-dev`** (see the
 Composition/template files' own header comments for full detail): (1) a
