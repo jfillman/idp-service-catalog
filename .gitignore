@@ -1,0 +1,6 @@
+# Crossplane Composition Function scaffolding (crossplane xpkg init) build artifacts
+.venv-default/
+*.xpkg
+dist/
+__pycache__/
+*.egg-info/

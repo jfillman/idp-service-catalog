@@ -1,0 +1,161 @@
+"""
+diagnosis-holmes-dispatch: thin replacement for ai-rollout's bespoke
+diagnosis-job/agent.py.
+
+Where agent.py ran its own Claude tool-use loop (spawning kubernetes-mcp-server
+and github-mcp-server as stdio subprocesses, holding its own
+ANTHROPIC_API_KEY + GITHUB_PERSONAL_ACCESS_TOKEN), this script holds neither
+credential: it makes exactly one HTTP call to an already-running, shared
+HolmesGPT service (POST /api/chat), which has its own standing credentials
+and its own k8s + GitHub MCP toolsets already wired up. Same investigation
+protocol as before (ported from agent.py's SYSTEM_PROMPT), same env-var
+contract from the Composition Function's build_diagnosis_job() (unchanged),
+just handed off instead of performed locally.
+
+Required environment variables (same names function-rollout-watcher already
+sets - see fn.py's build_diagnosis_job()):
+  ROLLOUT_NAME, ROLLOUT_NAMESPACE
+  GITOPS_OWNER, GITOPS_REPO, GITOPS_BASE_BRANCH, GITOPS_MANIFEST_PATH
+  SRC_OWNER, SRC_REPO, SRC_BASE_BRANCH, SRC_PATH
+
+Optional:
+  HOLMES_URL   - defaults to the in-cluster HolmesGPT Service
+  HOLMES_MODEL - model override passed to Holmes; unset uses Holmes' own
+                 configured default (claude-sonnet)
+"""
+
+import os
+import sys
+
+import requests
+
+def env(name: str, default: str = "", required: bool = False) -> str:
+    val = os.environ.get(name, default)
+    if required and not val:
+        print(f"FATAL: required env var {name} is not set", file=sys.stderr)
+        sys.exit(1)
+    return val
+
+
+ROLLOUT_NAME = env("ROLLOUT_NAME", required=True)
+ROLLOUT_NAMESPACE = env("ROLLOUT_NAMESPACE", required=True)
+GITOPS_OWNER = env("GITOPS_OWNER", required=True)
+GITOPS_REPO = env("GITOPS_REPO", required=True)
+GITOPS_BASE_BRANCH = env("GITOPS_BASE_BRANCH", "main")
+GITOPS_MANIFEST_PATH = env("GITOPS_MANIFEST_PATH", "")
+SRC_OWNER = env("SRC_OWNER", GITOPS_OWNER)
+SRC_REPO = env("SRC_REPO", GITOPS_REPO)
+SRC_BASE_BRANCH = env("SRC_BASE_BRANCH", "main")
+SRC_PATH = env("SRC_PATH", "")
+HOLMES_URL = env("HOLMES_URL", "http://holmesgpt-holmes.holmesgpt.svc.cluster.local/api/chat")
+HOLMES_MODEL = env("HOLMES_MODEL", "")
+
+_SAME_REPO = (GITOPS_OWNER, GITOPS_REPO) == (SRC_OWNER, SRC_REPO)
+if _SAME_REPO:
+    _REPO_DESCRIPTION = f"""There is one relevant repository, {GITOPS_OWNER}/{GITOPS_REPO}
+(monorepo containing both the GitOps manifest and the app's source code):
+  - The GitOps manifest (this XR's own definition) is at
+    `{GITOPS_MANIFEST_PATH or "(ask via k8s tools / infer from repo structure)"}`, branch `{GITOPS_BASE_BRANCH}`.
+  - The app's source code is under `{SRC_PATH or "(infer from repo structure)"}`, branch `{SRC_BASE_BRANCH}`."""
+else:
+    _REPO_DESCRIPTION = f"""There are TWO separate repositories:
+  - GitOps manifest repo: {GITOPS_OWNER}/{GITOPS_REPO}, path
+    `{GITOPS_MANIFEST_PATH or "(ask via k8s tools / infer from repo structure)"}`, branch `{GITOPS_BASE_BRANCH}`.
+  - App source code repo: {SRC_OWNER}/{SRC_REPO}, path
+    `{SRC_PATH or "(infer from repo structure)"}`, branch `{SRC_BASE_BRANCH}`."""
+
+ADDITIONAL_SYSTEM_PROMPT = f"""You are troubleshooting a failed Argo Rollouts canary
+deployment that was automatically aborted and rolled back.
+
+Incident:
+  Rollout: {ROLLOUT_NAME}
+  Namespace: {ROLLOUT_NAMESPACE}
+
+{_REPO_DESCRIPTION}
+
+Deployment configuration (image tag, replica count, canary steps, and any
+app config values under spec.parameters) lives in the GitOps manifest.
+The app's own logic lives in the source repo. Neither repo tells you in
+advance which one actually needs to change for this incident -- that's
+exactly what your investigation is for.
+
+Your job, in order:
+1. Investigate broadly and without assuming the cause. Look at the
+   Rollout's status/conditions, any AnalysisRun(s) and why they failed,
+   recent Kubernetes Events, logs from the crashing/unhealthy canary pods
+   (current and previous), and any ConfigMaps or other resources it
+   depends on. Follow the evidence wherever it leads rather than checking
+   off a predetermined list. Form a specific, evidence-backed root cause --
+   not a guess.
+2. Let the root cause tell you which repo needs the fix, not the other way
+   around. A bad deployment setting (image tag, replica count, a config
+   value) means the GitOps manifest needs to change. A bug in the app's
+   own behavior means the source repo needs to change. Sometimes it's
+   genuinely ambiguous between the two -- if so, say so in the PR rather
+   than guessing. Read the current file content from GitHub before
+   proposing a diff, in whichever repo actually needs it.
+3. Open a pull request:
+   - Create a new branch off the appropriate base branch named
+     `ai-fix/{ROLLOUT_NAME}-<short-description>`.
+   - Commit the corrected file content to that branch, in whichever repo
+     actually needs the fix.
+   - Open a PR whose description contains:
+     a. Root cause (what actually happened, with the specific evidence -
+        log lines, event reasons, analysis failure messages, config
+        values - that support it), and why it points at this repo/file
+        rather than the other one.
+     b. The fix, and why it resolves the root cause
+     c. Any residual risk or things a human reviewer should double check
+
+Be concrete. Cite the actual pod names, event reasons, log lines, and
+config values you observed rather than speculating. If the evidence is
+inconclusive, say so explicitly in the PR description rather than guessing
+at a fix.
+"""
+
+RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "RolloutDiagnosis",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "root_cause": {"type": "string"},
+                "fix_repo": {"type": "string", "description": "owner/repo the fix PR targets"},
+                "pr_url": {"type": ["string", "null"]},
+                "summary": {"type": "string"},
+            },
+            "required": ["root_cause", "fix_repo", "pr_url", "summary"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def main():
+    payload = {
+        "ask": (
+            f"The Rollout '{ROLLOUT_NAME}' in namespace '{ROLLOUT_NAMESPACE}' "
+            "was just aborted and rolled back. Please investigate and open a fix PR."
+        ),
+        "additional_system_prompt": ADDITIONAL_SYSTEM_PROMPT,
+        "response_format": RESPONSE_FORMAT,
+        "request_source": "rollout_diagnosis",
+        "source_ref": f"{ROLLOUT_NAMESPACE}/{ROLLOUT_NAME}",
+        "stream": False,
+    }
+    if HOLMES_MODEL:
+        payload["model"] = HOLMES_MODEL
+
+    print(f"Dispatching diagnosis request to {HOLMES_URL} for {ROLLOUT_NAMESPACE}/{ROLLOUT_NAME}", file=sys.stderr)
+    resp = requests.post(HOLMES_URL, json=payload, timeout=600)
+    resp.raise_for_status()
+    result = resp.json()
+
+    print("=== HOLMES DIAGNOSIS ===")
+    print(result)
+
+
+if __name__ == "__main__":
+    main()
