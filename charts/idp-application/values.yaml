@@ -109,6 +109,15 @@ rollout:
 # resource" - not rendered by this chart, referenced by name from rollout.steps).
 analysisTemplates: []
 # - name: checkout-conversion-rate
+#   args: [] # NOT in §3's schema - real gap found live migrating widget-api
+#            # (2026-08-13). Required whenever a metric's query references
+#            # `{{args.<name>}}` (e.g. the canary-hash Argo Rollouts itself
+#            # supplies via rollout.canaryAnalysis.args/steps[].analysis.args) -
+#            # Argo Rollouts needs the arg NAME declared here, on the template
+#            # itself, before it'll resolve a value supplied elsewhere. Just
+#            # `[{name: canary-hash}]` - no valueFrom/value here, that part comes
+#            # from whichever Rollout step or canaryAnalysis block references
+#            # this template.
 #   metrics: []
 
 env: [] # [{name: FOO, value: bar}] - Embedded
@@ -254,9 +263,18 @@ serviceMonitor:
   additionalLabels: {} # escape hatch - many kube-prometheus-stack installs require a
                         # specific label (e.g. `release: <helm-release-name>`) for
                         # their own Prometheus CR's serviceMonitorSelector to pick
-                        # this object up at all. NOT confirmed against idp's actual
-                        # kube-prometheus-stack install - same class of placeholder as
-                        # networkPolicy.ingressControllerNamespaceSelector below.
+                        # this object up at all. Confirmed 2026-08-13 that this
+                        # specific gitops-cluster-dev install does NOT need it -
+                        # `serviceMonitorSelectorNilUsesHelmValues: false` (set so the
+                        # OTel Collector's own ServiceMonitor, unlabeled, gets
+                        # discovered too) leaves `Prometheus.spec.serviceMonitorSelector`
+                        # empty (`{}`) - matches every ServiceMonitor cluster-wide,
+                        # confirmed live (widget-api's own ServiceMonitor was scraped
+                        # with no additionalLabels set at all). A DIFFERENT
+                        # kube-prometheus-stack install using the chart's own default
+                        # (`serviceMonitorSelectorNilUsesHelmValues: true`) would still
+                        # need `release: <that install's release name>` here - kept as
+                        # a real escape hatch, not removed, for that case.
 
 networkPolicy:
   enabled: true

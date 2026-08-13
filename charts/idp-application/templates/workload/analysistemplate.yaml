@@ -2,8 +2,18 @@
 Embedded-tier, app-specific AnalysisTemplates only - the shared golden-path
 library (error-rate-check, success-rate-check) is ClusterAnalysisTemplate,
 installed once by idp-cluster-baseline, never rendered per-app (§3). Referencing
-either kind by name into rollout.steps[].setWeight/analysis is on the developer -
-this chart only renders the objects, it doesn't auto-wire them into steps.
+either kind by name into rollout.steps[].setWeight/analysis or
+rollout.canaryAnalysis is on the developer - this chart only renders the
+objects, it doesn't auto-wire them into steps.
+
+`args:` real bug found live migrating widget-api (2026-08-13): this template used
+to render `spec.metrics` only, silently dropping any `args:` a values entry
+supplied. Argo Rollouts requires an arg to be declared in the AnalysisTemplate's
+OWN spec.args (not just supplied a value via the Rollout's canary.analysis.args)
+before a metric query can reference it as `{{args.<name>}}` - without it, the
+AnalysisRun errors "Unable to resolve metric arguments" even though the Rollout's
+own spec looks completely correct. Confirmed against the real Argo Rollouts docs,
+not guessed.
 */}}
 {{- range .Values.analysisTemplates }}
 apiVersion: argoproj.io/v1alpha1
@@ -15,6 +25,10 @@ metadata:
     {{- include "idp-application.labels" $ | nindent 4 }}
     platform.io/subcomponent: workload
 spec:
+  {{- if .args }}
+  args:
+    {{- toYaml .args | nindent 4 }}
+  {{- end }}
   metrics:
     {{- toYaml .metrics | nindent 4 }}
 ---
