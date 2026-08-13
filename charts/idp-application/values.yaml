@@ -1,0 +1,297 @@
+# idp-application default values.
+#
+# This file documents the full schema from idp/docs/service-catalog-design.md §3.
+# A real gitops-<app-name>/<cluster>/<env>/values.yaml overrides the fields below;
+# it does not need to repeat ones it's happy leaving at these defaults.
+#
+# A handful of fields here are NOT in §3's schema block verbatim - they were needed
+# to actually implement it, and are called out individually below with why. None of
+# them contradict §3; they fill gaps §3 explicitly left to "chart implementation
+# itself deferred to a later session." A second batch (serviceAccount, cronJobs,
+# jobs, serviceMonitor, extraManifests) was added 2026-08-13 in a deliberate v1
+# resource-coverage pass, once the base chart was already built and fixture-tested -
+# same reasoning, also called out individually below. A third batch, same day: real
+# gaps found in code review (configMaps: could only be volume-mounted, never
+# envFrom'd; secrets: could only be an env var, never mounted; configMaps: could
+# only be chart-owned, never reference one created externally, e.g. by a Kustomize
+# configMapGenerator) - both lists gained an `as: env|volume|both` field, and
+# configMaps: gained `existingConfigMap:` as an alternative to `data:`.
+
+# --- Identity ---------------------------------------------------------------
+
+appName: ""
+appType: app # app | infra - naming-conventions.md's existing distinction (§3, "Components")
+
+# NOT in §3's schema block. §3's "Linking mechanism" says the chart "stamps
+# spec.environmentRef: {name: <app>-<cluster>-<env>} ... from its own release
+# context" - but a Helm release's context (Release.Name/Namespace) has no
+# structural link back to which cluster/env it is. Since every other Bootstrap-tier
+# XR in this design (ApplicationEnvironment) is scoped one-per-(app,cluster,env) and
+# commits directly into <cluster>/<env>/values.yaml (§ Item 3), the natural source
+# for these two values is the Composition that commits this very file - it already
+# knows both. Added as plain top-level fields (matching appName/appType's own flat
+# style, not a nested platformIdentity block like platform-cicd-app's separate
+# platform-identity.yaml - this chart has no equivalent split-file convention).
+#
+# Named `envName`, not `env` - §3's schema already uses the top-level key `env` for
+# the Embedded-tier container env-var list (`env: [{name: FOO, value: bar}]`); a
+# same-named field here would silently collide with it in one flat values map.
+cluster: ""
+envName: ""
+
+# NOT in §3's schema block - added 2026-08-13 when the chart was built, per a v1
+# resource-coverage pass. Without this, every workload (Rollout/Job/CronJob below)
+# silently ran as the namespace's `default` ServiceAccount - fine until the first
+# real need for scoped RBAC, a private-registry pull, or a cloud workload-identity
+# binding (IRSA-equivalent), all of which anchor to a ServiceAccount *name*. Adding
+# this after real deployments exist means a name change every caller has to follow;
+# adding it now, with a name that's already the deterministic `appName` default,
+# means it never has to change even when one of those needs shows up later.
+serviceAccount:
+  create: true
+  name: "" # defaults to appName
+  annotations: {} # escape hatch - e.g. a cloud workload-identity annotation
+  imagePullSecrets: []
+  # [{name: <existing-secret-name>}] - attached to the ServiceAccount once, inherited
+  # by every pod (Rollout/Job/CronJob) via serviceAccountName, rather than repeating
+  # imagePullSecrets on each pod spec separately. This chart does NOT create the
+  # underlying pull-secret itself (unlike platform-cicd's own
+  # registry-credentials-external-secret.yaml) - assumes one is already provisioned
+  # into this namespace by cluster/tenant onboarding. Real, not-yet-resolved
+  # question for whoever builds that mechanism - flagged, not designed here.
+
+# --- Embedded: workload (Argo Rollout) --------------------------------------
+#
+# Omit `rollout` entirely (set to null) for an infra-type release with no custom
+# workload - e.g. a standalone component-only env (§3 "Open design question",
+# resolved in this implementation as "optional in the same chart", per the doc's
+# own stated leaning and Item 7's "if yes (recommended, for mechanism reuse)").
+rollout:
+  image:
+    repository: ""
+    tag: ""
+  replicas: 2
+  resources: {}
+  strategy: canary # canary | blueGreen - platform default steps used unless rollout.steps is set
+  steps: [] # escape hatch for a custom canary/blueGreen step sequence; platform default used when empty
+    # (§3 "Still open" item 3 - the platform default step sequence itself isn't designed
+    # yet, so this chart ships no default steps of its own yet - see chart README)
+
+  # Curated, safe-default escape hatches - each toYaml'd straight into the main
+  # container / pod template when set.
+  command: []
+  args: []
+  ports:
+    - name: http
+      containerPort: 8080
+  livenessProbe: {}
+  readinessProbe: {}
+  podSecurityContext: {}
+  containerSecurityContext: {}
+  extraContainers: []
+  podSpec: {} # raw map, deep-merged (mergeOverwrite) onto .spec.template.spec last -
+              # NOT for containers[0] (use the curated fields above) or additional
+              # containers (use extraContainers) - see §3's own warning, quoted in
+              # the rollout template's header comment.
+
+# Embedded - app-specific custom AnalysisTemplates (ClusterAnalysisTemplate covers
+# the shared/golden-path case, per §3 "Argo Rollouts as the default deployment
+# resource" - not rendered by this chart, referenced by name from rollout.steps).
+analysisTemplates: []
+# - name: checkout-conversion-rate
+#   metrics: []
+
+env: [] # [{name: FOO, value: bar}] - Embedded
+
+configMaps: [] # Embedded - see "Rendering mechanism" in §3
+# - name: app-settings
+#   as: volume            # NOT in §3's schema - added 2026-08-13, second resource-
+#                          # coverage pass. env | volume | both (default: volume,
+#                          # §3's original unconditional behavior, unchanged). env
+#                          # renders one `envFrom: [{configMapRef: ...}]` - every key
+#                          # in `data:` becomes an env var verbatim (no per-key
+#                          # renaming - use plain top-level `env:` for that).
+#   mountPath: /config/app-settings # only used when `as` includes volume - defaults
+#                                    # to /config/<name>. Mirrors the `mountPath`
+#                                    # field §3's own `volumes:` entries already carry.
+#   data: {app-config.yaml: "..."}  # EITHER this (this chart renders + owns the
+#                                    # ConfigMap)...
+#   existingConfigMap: ""           # ...OR this (mutually exclusive with `data:` -
+#                                    # exactly one required) - references a ConfigMap
+#                                    # already created outside this chart, e.g. a
+#                                    # Kustomize configMapGenerator with
+#                                    # disableNameSuffixHash: true (a fixed, known
+#                                    # name - a hash-suffixed name would need an
+#                                    # external process keeping this field in sync on
+#                                    # every regeneration, not solved here). The
+#                                    # chart never renders a ConfigMap object for
+#                                    # this entry, only references the given name.
+
+secrets: [] # Embedded - same ExternalSecret/ClusterSecretStore mechanism platform-cicd
+            # already built (charts/platform-cicd-app/templates/secrets/), aggregated
+            # into one target Secret (app-secrets) consumed by the main container.
+# - name: db-password   # secretKey in the rendered Secret AND the Infisical property
+#                        # name read from the store (backend property == name, same
+#                        # as platform-cicd's default-to-name behavior)
+#   as: env               # NOT in §3's schema - added 2026-08-13, second resource-
+#                          # coverage pass. env | volume | both (default: env, §3's
+#                          # original unconditional behavior, unchanged). volume
+#                          # mode does NOT create a separate Secret/volume per entry -
+#                          # every `as: volume`/`both` entry shares ONE `app-secrets`
+#                          # Secret volume, each mounted at its own exact file path
+#                          # via `subPath: <name>` (the standard mechanism for
+#                          # projecting one key from a Secret without a volume per key).
+#   key: DB_PASSWORD     # env var name (only used when `as` includes env) - NOT the
+#                        # same use of `key` as platform-cicd's ExternalSecret -
+#                        # there `key` overrides the backend property; here it's the
+#                        # env var name exposed to the container (defaults to `name`,
+#                        # uppercased, when omitted). Needed because this chart, unlike
+#                        # platform-cicd's, actually runs a workload that consumes the
+#                        # secret as an env var, not just stages a Secret for a Task to
+#                        # mount.
+#   mountPath: /etc/tls/tls.crt # only used when `as` includes volume - the exact
+#                                # file path this one key is projected to (NOT a
+#                                # directory, unlike configMaps' mountPath - each
+#                                # secrets: entry is exactly one key). Defaults to
+#                                # /secrets/<name> when omitted.
+#   shared: false        # NOT in §3's schema - item 8 says "shared" secrets live under
+#                         # a /shared/* Infisical path, env-specific ones under /<env>/*,
+#                         # and which path a given env reads is "controlled by that
+#                         # env's own ExternalSecret (remoteRef), not by the store" -
+#                         # this is that per-entry control. Defaults to false (env-scoped).
+
+volumes: [] # Embedded - PVC support. Same list-of-objects + range-loop pattern as
+            # configMaps, per §3's 2026-08-13 revision.
+# - name: uploads
+#   size: 10Gi
+#   storageClassName: standard   # omit for cluster default
+#   accessModes: [ReadWriteOnce] # default if omitted
+#   mountPath: /data/uploads
+
+# NOT in §3's schema - added 2026-08-13, same v1 resource-coverage pass as
+# serviceAccount above. Both share `env`/`secrets`/`configMaps`/`volumes` with the
+# main container automatically (same app, same namespace, same config - no opt-in
+# needed, matching this schema's existing "no orphan state" instinct from §
+# "Dependency ordering"). If an entry omits `image`, it defaults to `rollout.image`
+# - set explicitly (`fail`s otherwise) when `rollout:` isn't set at all.
+cronJobs: [] # scheduled batch tasks (nightly cleanup, report generation, ...)
+# - name: nightly-cleanup
+#   schedule: "0 2 * * *"
+#   image: {repository: ..., tag: ...}  # optional, defaults to rollout.image
+#   command: []
+#   args: []
+#   resources: {}
+#   containerSecurityContext: {}
+#   concurrencyPolicy: Forbid           # Forbid | Allow | Replace
+#   suspend: false
+#   successfulJobsHistoryLimit: 3
+#   failedJobsHistoryLimit: 1
+#   backoffLimit: 3
+
+jobs: [] # one-off batch tasks - the common "run a DB migration before the new
+         # Rollout comes up" pattern. Same image/env/secrets/configMaps/volumes
+         # defaulting as cronJobs above.
+# - name: db-migrate
+#   image: {}                # optional, defaults to rollout.image
+#   command: []
+#   args: []
+#   resources: {}
+#   containerSecurityContext: {}
+#   backoffLimit: 3
+#   hook: true                # true (default): a real Helm pre-install/pre-upgrade
+#                              # hook - deleted and recreated on every release
+#                              # (helm.sh/hook-delete-policy: before-hook-creation,
+#                              # hook-succeeded), so it always re-runs without a name
+#                              # change. false: a plain, persistent Job object -
+#                              # rerunning it later is on the developer (new name, or
+#                              # manual delete), same as vanilla Job semantics.
+
+autoscaling:
+  enabled: false
+  min: 2
+  max: 10
+  targetCPUPercent: 70
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1 # NOT in §3's schema (only {enabled: false} shown) - a PDB needs
+                   # either minAvailable or maxUnavailable to mean anything; defaults
+                   # to the conservative "always keep at least 1" rather than inventing
+                   # a percentage. maxUnavailable below is the alternative, mutually
+                   # exclusive with minAvailable - set at most one.
+  maxUnavailable: null
+
+ingress:
+  enabled: false
+  host: ""
+  path: / # NOT in §3's schema - needed for a real Ingress rule; / is the sane default.
+  pathType: Prefix
+  annotations: {}
+  tls: false # NOT in §3's schema - whether to request a cert-manager-issued TLS cert
+             # for `host` (idp-cluster-baseline installs cert-manager per gitops-strategy.md
+             # §"10-crds-operators"). Off by default since not every env needs it.
+  tlsSecretName: "" # defaults to "<release-name>-tls" when tls: true and this is empty
+
+# NOT in §3's schema - added 2026-08-13. kube-prometheus-stack is already installed
+# cluster-side (idp_session_phase2_holmesgpt, namespace `observability`), so this is
+# near-zero-cost: every app gets Prometheus-scraped from its own declared
+# rollout.ports without hand-authoring a ServiceMonitor per app.
+serviceMonitor:
+  enabled: true
+  path: /metrics
+  port: "" # defaults to the first rollout.ports entry's name
+  interval: 30s
+  additionalLabels: {} # escape hatch - many kube-prometheus-stack installs require a
+                        # specific label (e.g. `release: <helm-release-name>`) for
+                        # their own Prometheus CR's serviceMonitorSelector to pick
+                        # this object up at all. NOT confirmed against idp's actual
+                        # kube-prometheus-stack install - same class of placeholder as
+                        # networkPolicy.ingressControllerNamespaceSelector below.
+
+networkPolicy:
+  enabled: true
+  allowIngressFromIngressController: true
+  # NOT in §3's schema - §3 says "deny cross-namespace ingress except from the
+  # ingress controller" but never names which namespace/labels identify it, and no
+  # ingress controller has been installed or named anywhere in idp's docs yet
+  # (confirmed - see chart README). Parameterized rather than hardcoded so it can be
+  # set correctly once idp-cluster-baseline actually picks/installs one; defaults to
+  # the ingress-nginx project's own conventional namespace label as a reasonable
+  # placeholder, not a confirmed value.
+  ingressControllerNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: ingress-nginx
+  extraIngressRules: []
+  extraEgressRules: []
+
+components: [] # Attached - see "Rendering mechanism" in §3
+# - type: redis
+#   name: cache
+#   spec: {size: small}
+
+slos: [] # Attached
+# - name: availability
+#   objective: 99.9
+#   indicator: {}
+
+# NOT in §3's schema. The generic components:/slos: range loop (§3 "Rendering
+# mechanism") needs a type -> {kind, apiVersion} lookup table, and the doc's own v1
+# catalog table (Redis/OAuthServer/Database/Queue/SLO) doesn't fix an actual XRD
+# API group yet - none of these XRDs are built (idp-service-catalog/README.md:
+# "xrds/ ... don't exist yet"). catalog.idp.io/v1alpha1 is this chart's own
+# placeholder pending that group being confirmed when the XRDs are actually
+# authored - update here (not in every template) when it is.
+attachedResourceApiVersion: catalog.idp.io/v1alpha1
+componentKinds:
+  redis: Redis
+  oauth-server: OAuthServer
+  database: Database
+  queue: Queue
+
+# NOT in §3's schema - added 2026-08-13, the deliberate last-resort escape hatch: a
+# raw list of arbitrary K8s objects, rendered as-is, no labels stamped (the chart
+# doesn't know their shape well enough to safely inject anything). Same pattern
+# idp-cluster-baseline already uses (gitops-strategy.md §8's extraManifests:) - the
+# point is that a future one-off need (some CRD nobody anticipated) never requires
+# touching this chart's templates again, only this values list.
+extraManifests: []

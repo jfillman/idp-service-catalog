@@ -1,0 +1,43 @@
+{{/*
+Default reflects §3's "isolate traffic to its own namespace": deny cross-namespace
+ingress except same-namespace pods and (when ingress.enabled) the ingress
+controller; egress left open by default - so Egress is deliberately NOT in
+policyTypes unless extraEgressRules adds a real rule (an empty policyTypes: [Egress]
+would mean "deny all egress", the opposite of the documented default). See
+values.yaml's networkPolicy.ingressControllerNamespaceSelector comment for why that
+selector is a placeholder, not a confirmed value - no ingress controller has been
+installed or named anywhere in idp's docs yet.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: networking
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    {{- if .Values.networkPolicy.extraEgressRules }}
+    - Egress
+    {{- end }}
+  ingress:
+    - from:
+        - podSelector: {}
+        {{- if and .Values.networkPolicy.allowIngressFromIngressController .Values.ingress.enabled }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressControllerNamespaceSelector | nindent 12 }}
+        {{- end }}
+    {{- range .Values.networkPolicy.extraIngressRules }}
+    - {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- if .Values.networkPolicy.extraEgressRules }}
+  egress:
+    {{- range .Values.networkPolicy.extraEgressRules }}
+    - {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- end }}
+{{- end }}

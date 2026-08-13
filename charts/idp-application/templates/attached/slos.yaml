@@ -1,0 +1,25 @@
+{{/*
+One SLO XR per slos: entry (§3 Item 4) - `slo` is a fixed kind (see
+idp-application.componentKind), not a row in componentKinds, since it's its own
+top-level field, not a components: entry. Every entry field except `name` (the
+XR's own metadata.name) passes straight through as spec, same generic-passthrough
+instinct as components.yaml - this chart doesn't know or validate SLO-specific
+fields (objective, indicator, ...), the SLO XRD's own schema does.
+*/}}
+{{- range .Values.slos }}
+apiVersion: {{ $.Values.attachedResourceApiVersion }}
+kind: {{ include "idp-application.componentKind" (dict "ctx" $ "type" "slo") }}
+metadata:
+  name: {{ .name }}
+  namespace: {{ include "idp-application.namespace" $ }}
+  labels:
+    {{- include "idp-application.labels" $ | nindent 4 }}
+    platform.io/subcomponent: attached-slo
+spec:
+  environmentRef:
+    name: {{ include "idp-application.environmentRef" $ }}
+  {{- with (omit . "name") }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+---
+{{- end }}

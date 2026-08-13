@@ -1,0 +1,19 @@
+{{- if and .Values.podDisruptionBudget.enabled (eq (include "idp-application.hasRollout" .) "true") }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: scaling
+spec:
+  {{- if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "idp-application.selectorLabels" . | nindent 6 }}
+{{- end }}

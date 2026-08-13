@@ -20,11 +20,33 @@ from the [`ai-rollout`](https://github.com/jfillman/ai-rollout) prototype
 [jfillman/idp#8](https://github.com/jfillman/idp/pull/8). See each
 function's own README for the full detail.
 
-**Not started yet**: the rest of Phase 2 — generalizing this mechanism
-beyond the single-repo `widget-api` demo shape, the `idp-application` Helm
-chart itself (`charts/idp-application`, per `service-catalog-design.md` §3),
-and the v1 XRD catalog (`NodeJSApplication`, `SpringBootApplication`,
-`ApplicationEnvironment`, `SLO`, and the Component XRDs).
+**`idp-application` Helm chart — built, `helm lint`/`helm template` verified
+against fixture values (minimal, full-featured incl. blueGreen, and an
+`appType: infra` standalone-component release).** Renders §3's full schema
+(Argo Rollout, Service, ConfigMaps, ExternalSecret, PVCs, HPA,
+PodDisruptionBudget, NetworkPolicy, AnalysisTemplates, `components:`/`slos:` as
+generic Crossplane XRs) plus a deliberate v1 resource-coverage pass beyond §3
+entirely: a dedicated ServiceAccount (+ imagePullSecrets), `jobs:`/`cronJobs:`
+batch tasks (sharing the main workload's env/secrets/config automatically), a
+ServiceMonitor (kube-prometheus-stack is already installed cluster-side), and
+a raw `extraManifests:` escape hatch. See `charts/idp-application/README.md`
+for the concrete decisions made in both passes — including two real bugs
+`helm lint`/`helm template` caught live: an `envName`/`env` naming collision,
+and Sprig's `default` silently discarding explicit `false`/`0` values (fixed
+with `hasKey`-based checks) — and the placeholders still pending confirmation
+(ingress-controller namespace selector, attached-resource API group,
+ServiceMonitor selector label, who provisions the image-pull Secret).
+
+**Not started yet**: the v1 XRD catalog itself (`NodeJSApplication`,
+`SpringBootApplication`, `ApplicationEnvironment`, `SLO`, and the Component
+XRDs) and their Compositions — `idp-application` is what a Composition will
+render into `gitops-<app-name>`, but nothing calls it yet. Also not built:
+the `ClusterAnalysisTemplate` golden-path library and `argocd-cm` `Rollout`
+health-check config (§3 says these belong in `idp-cluster-baseline`), and a
+real platform default canary step sequence (§3 "Still open" item 3 — the
+chart ships a deliberately inert placeholder in the meantime, see its README).
+Nothing here has been live-verified against a real cluster/Argo Rollouts
+controller/`ApplicationEnvironment` XR yet — fixture-only so far.
 
 ## Layout (so far)
 
@@ -32,6 +54,8 @@ and the v1 XRD catalog (`NodeJSApplication`, `SpringBootApplication`,
 functions/
   function-rollout-watcher/    Composition Function: watches Rollout, dispatches diagnosis
   diagnosis-holmes-dispatch/   Thin Job: hands the investigation off to HolmesGPT
+charts/
+  idp-application/             §3's Embedded+Attached tier chart - one release per (app, cluster, env)
 ```
 
-`charts/`, `xrds/`, and `compositions/` don't exist yet — next up.
+`xrds/` and `compositions/` don't exist yet — next up.

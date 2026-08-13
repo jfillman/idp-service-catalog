@@ -1,0 +1,11 @@
+{{/*
+Last-resort escape hatch: arbitrary K8s objects, rendered as-is - no labels
+stamped (the chart doesn't know their shape well enough to safely inject
+anything), same idp-cluster-baseline extraManifests: pattern (gitops-strategy.md
+§8). The point is a future one-off need (some CRD nobody anticipated) never
+requires touching this chart's templates again, only this values list.
+*/}}
+{{- range .Values.extraManifests }}
+{{- toYaml . }}
+---
+{{- end }}

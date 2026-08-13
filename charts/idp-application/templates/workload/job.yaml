@@ -1,0 +1,38 @@
+{{/*
+One-off Job per jobs: entry - e.g. a pre-upgrade DB migration, run once before the
+new Rollout comes up. hook: true (default) makes it a real Helm pre-install/
+pre-upgrade hook, deleted and recreated on every release (before-hook-creation,
+hook-succeeded), so it always re-runs without needing a new name each time -
+hook: false renders a plain, persistent Job instead (rerunning it later is on the
+developer, ordinary Job semantics). Container built by idp-application.batchContainer
+- see _helpers.tpl for the image-fallback/env/volume sharing rules.
+*/}}
+{{- range .Values.jobs }}
+{{- $container := fromYaml (include "idp-application.batchContainer" (dict "ctx" $ "entry" .)) }}
+{{- $volumes := fromYamlArray (include "idp-application.workloadVolumes" $) }}
+{{- $podSpec := dict "serviceAccountName" (include "idp-application.serviceAccountName" $) "restartPolicy" "OnFailure" "containers" (list $container) }}
+{{- if $volumes }}{{- $_ := set $podSpec "volumes" $volumes }}{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .name }}
+  namespace: {{ include "idp-application.namespace" $ }}
+  labels:
+    {{- include "idp-application.labels" $ | nindent 4 }}
+    platform.io/subcomponent: workload
+  {{- if or (not (hasKey . "hook")) .hook }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
+spec:
+  backoffLimit: {{ include "idp-application.intOr" (dict "map" . "key" "backoffLimit" "default" 3) }}
+  template:
+    metadata:
+      labels:
+        {{- include "idp-application.labels" $ | nindent 8 }}
+    spec:
+      {{- toYaml $podSpec | nindent 6 }}
+---
+{{- end }}

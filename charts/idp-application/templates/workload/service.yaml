@@ -1,0 +1,45 @@
+{{/*
+One Service targeting the Rollout's pods, one port per rollout.ports entry - the
+first entry "doubles as the Service/ingress target" (§3). A second, `-preview`
+Service is rendered only for strategy: blueGreen, matching what Argo Rollouts'
+blueGreen.previewService actually needs (rollout.yaml references both names).
+*/}}
+{{- if eq (include "idp-application.hasRollout" .) "true" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: workload
+spec:
+  selector:
+    {{- include "idp-application.selectorLabels" . | nindent 4 }}
+  ports:
+    {{- range .Values.rollout.ports }}
+    - name: {{ .name }}
+      port: {{ .containerPort }}
+      targetPort: {{ .name }}
+    {{- end }}
+---
+{{- if eq .Values.rollout.strategy "blueGreen" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.appName }}-preview
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: workload
+spec:
+  selector:
+    {{- include "idp-application.selectorLabels" . | nindent 4 }}
+  ports:
+    {{- range .Values.rollout.ports }}
+    - name: {{ .name }}
+      port: {{ .containerPort }}
+      targetPort: {{ .name }}
+    {{- end }}
+{{- end }}
+{{- end }}

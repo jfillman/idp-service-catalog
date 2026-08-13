@@ -1,0 +1,21 @@
+{{/*
+Embedded-tier, app-specific AnalysisTemplates only - the shared golden-path
+library (error-rate-check, success-rate-check) is ClusterAnalysisTemplate,
+installed once by idp-cluster-baseline, never rendered per-app (§3). Referencing
+either kind by name into rollout.steps[].setWeight/analysis is on the developer -
+this chart only renders the objects, it doesn't auto-wire them into steps.
+*/}}
+{{- range .Values.analysisTemplates }}
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ .name }}
+  namespace: {{ include "idp-application.namespace" $ }}
+  labels:
+    {{- include "idp-application.labels" $ | nindent 4 }}
+    platform.io/subcomponent: workload
+spec:
+  metrics:
+    {{- toYaml .metrics | nindent 4 }}
+---
+{{- end }}

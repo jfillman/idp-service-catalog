@@ -1,0 +1,13 @@
+apiVersion: v2
+name: idp-application
+description: >-
+  One Helm release per (app, cluster, env) - renders the Embedded-tier workload
+  (Argo Rollout, Service, ConfigMaps, ExternalSecret, PVCs, HPA, PodDisruptionBudget,
+  NetworkPolicy, AnalysisTemplates) and the Attached-tier XRs (components:, slos:)
+  from one values.yaml. See idp/docs/service-catalog-design.md §3 - this chart is
+  that schema, built. Rendered by an ApplicationEnvironment XR's Composition; a
+  developer edits gitops-<app-name>/<cluster>/<env>/values.yaml directly, never this
+  chart's templates.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

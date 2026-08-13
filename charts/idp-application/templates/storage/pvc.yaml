@@ -1,0 +1,25 @@
+{{/*
+PVC support, §3's 2026-08-13 revision - one PersistentVolumeClaim per volumes:
+entry, same list-of-objects + range-loop pattern as configMaps. The matching
+volumeMount is added onto the main container by rollout.yaml, not here.
+*/}}
+{{- range .Values.volumes }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .name }}
+  namespace: {{ include "idp-application.namespace" $ }}
+  labels:
+    {{- include "idp-application.labels" $ | nindent 4 }}
+    platform.io/subcomponent: storage
+spec:
+  accessModes:
+    {{- toYaml (.accessModes | default (list "ReadWriteOnce")) | nindent 4 }}
+  {{- if .storageClassName }}
+  storageClassName: {{ .storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .size }}
+---
+{{- end }}

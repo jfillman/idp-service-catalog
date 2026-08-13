@@ -1,0 +1,116 @@
+{{/*
+Argo Rollouts, the confirmed default workload resource (§3 "Argo Rollouts as the
+default deployment resource") - replaces plain Deployment entirely, not offered as
+an option. Rendered only when rollout: is set (idp-application.hasRollout) - an
+appType: infra release with only a components: block sets rollout: null and gets
+no workload at all, per §3's "Open design question", implemented here per the
+doc's own stated leaning.
+
+Build order matters for the podSpec escape hatch below: main container ->
+extraContainers -> configMap/PVC volumes -> serviceAccountName/podSecurityContext,
+THEN podSpec is mergeOverwrite'd on top of all of it last, exactly as §3 specifies
+("deep-merged ... onto the rendered .spec.template.spec AFTER every
+curated/generated field"). env/envFrom/volumeMounts/volumes come from the same
+idp-application.workloadEnv/workloadEnvFrom/workloadVolumeMounts/workloadVolumes
+helpers job.yaml/cronjob.yaml also use - see their own header comment in
+_helpers.tpl for why that's shared rather than copied three times, and for how
+configMaps:/secrets: `as: env|volume|both` map onto env vs envFrom vs volume mounts.
+*/}}
+{{- if eq (include "idp-application.hasRollout" .) "true" }}
+{{- $firstPort := index .Values.rollout.ports 0 }}
+{{- $defaultProbe := dict "httpGet" (dict "path" "/" "port" $firstPort.name) }}
+{{- $mainContainer := dict
+      "name" .Values.appName
+      "image" (printf "%s:%s" .Values.rollout.image.repository .Values.rollout.image.tag)
+      "ports" (list)
+}}
+{{- range .Values.rollout.ports }}
+{{- $_ := set $mainContainer "ports" (append (get $mainContainer "ports") (dict "name" .name "containerPort" .containerPort)) }}
+{{- end }}
+{{- if .Values.rollout.command }}{{- $_ := set $mainContainer "command" .Values.rollout.command }}{{- end }}
+{{- if .Values.rollout.args }}{{- $_ := set $mainContainer "args" .Values.rollout.args }}{{- end }}
+{{- if .Values.rollout.resources }}{{- $_ := set $mainContainer "resources" .Values.rollout.resources }}{{- end }}
+{{- if .Values.rollout.containerSecurityContext }}{{- $_ := set $mainContainer "securityContext" .Values.rollout.containerSecurityContext }}{{- end }}
+{{- $_ := set $mainContainer "livenessProbe" (.Values.rollout.livenessProbe | default $defaultProbe) }}
+{{- $_ := set $mainContainer "readinessProbe" (.Values.rollout.readinessProbe | default $defaultProbe) }}
+{{- $env := fromYamlArray (include "idp-application.workloadEnv" .) }}
+{{- if $env }}{{- $_ := set $mainContainer "env" $env }}{{- end }}
+{{- $envFrom := fromYamlArray (include "idp-application.workloadEnvFrom" .) }}
+{{- if $envFrom }}{{- $_ := set $mainContainer "envFrom" $envFrom }}{{- end }}
+{{- $volumeMounts := fromYamlArray (include "idp-application.workloadVolumeMounts" .) }}
+{{- $volumes := fromYamlArray (include "idp-application.workloadVolumes" .) }}
+{{- if $volumeMounts }}{{- $_ := set $mainContainer "volumeMounts" $volumeMounts }}{{- end }}
+{{- $containers := list $mainContainer }}
+{{- range .Values.rollout.extraContainers }}{{- $containers = append $containers . }}{{- end }}
+{{- $podSpec := dict "containers" $containers "serviceAccountName" (include "idp-application.serviceAccountName" .) }}
+{{- if $volumes }}{{- $_ := set $podSpec "volumes" $volumes }}{{- end }}
+{{- if .Values.rollout.podSecurityContext }}{{- $_ := set $podSpec "securityContext" .Values.rollout.podSecurityContext }}{{- end }}
+{{- if .Values.rollout.podSpec }}
+{{- if hasKey .Values.rollout.podSpec "containers" }}
+{{- fail "rollout.podSpec must not set containers - use the curated container fields (command/args/ports/livenessProbe/...) for the main container, or rollout.extraContainers for sidecars. mergeOverwrite replaces whole arrays rather than merging by index, so podSpec.containers would silently clobber the chart-rendered container list instead of extending it (see §3's own warning in service-catalog-design.md)." }}
+{{- end }}
+{{- $podSpec = mergeOverwrite $podSpec .Values.rollout.podSpec }}
+{{- end }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: workload
+spec:
+  replicas: {{ .Values.rollout.replicas }}
+  selector:
+    matchLabels:
+      {{- include "idp-application.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "idp-application.labels" . | nindent 8 }}
+      {{- if or .Values.configMaps .Values.secrets }}
+      annotations:
+        {{- /* Forces a new pod template hash (and so a new Rollout revision) on a
+        pure data-value edit that leaves the pod spec's own references (ConfigMap/
+        Secret names, keys, mount paths) byte-identical - those reference-shape
+        changes already flow into the pod spec directly and don't need this.
+        checksum/configmaps hashes configmap.yaml's actual rendered output, so it's
+        blind to existingConfigMap: entries by construction (this chart can't see
+        their content) - fine, since any change to an existingConfigMap entry's own
+        metadata (mountPath, as, which name) already changes the pod spec directly.
+        checksum/secrets hashes external-secret.yaml's rendered ExternalSecret
+        declaration only - which keys/paths are referenced, NOT the actual secret
+        VALUE, which lives in Infisical and is invisible to Helm at render time.
+        Rotating a secret's value without touching this values.yaml will NOT
+        trigger a new revision - that's a live gap, not covered here (the usual
+        fix is a controller like Stakater's Reloader watching the rendered Secret
+        itself, not a Helm-render-time checksum, since Helm can't see the value). */}}
+        {{- if .Values.configMaps }}
+        checksum/configmaps: {{ include (print $.Template.BasePath "/config/configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.secrets }}
+        checksum/secrets: {{ include (print $.Template.BasePath "/config/external-secret.yaml") . | sha256sum }}
+        {{- end }}
+      {{- end }}
+    spec:
+      {{- toYaml $podSpec | nindent 6 }}
+  strategy:
+    {{- if eq .Values.rollout.strategy "blueGreen" }}
+    blueGreen:
+      activeService: {{ .Values.appName }}
+      previewService: {{ .Values.appName }}-preview
+    {{- else }}
+    canary:
+      steps:
+        {{- if .Values.rollout.steps }}
+        {{- toYaml .Values.rollout.steps | nindent 8 }}
+        {{- else }}
+        # No platform default canary step sequence is designed yet (§3 "Still open"
+        # item 3) - this single setWeight:100 step is a deliberately inert
+        # placeholder (behaves like an ordinary rolling update, no real canary
+        # analysis) until that default is designed. Set rollout.steps explicitly for
+        # anything beyond that in the meantime.
+        - setWeight: 100
+        {{- end }}
+    {{- end }}
+{{- end }}

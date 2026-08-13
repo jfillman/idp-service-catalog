@@ -1,0 +1,28 @@
+{{/*
+scaleTargetRef.kind: Rollout, not Deployment - Argo Rollouts supports the native
+HPA target directly (§3), no different autoscaling mechanism needed.
+*/}}
+{{- if and .Values.autoscaling.enabled (eq (include "idp-application.hasRollout" .) "true") }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: scaling
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: {{ .Values.appName }}
+  minReplicas: {{ .Values.autoscaling.min }}
+  maxReplicas: {{ .Values.autoscaling.max }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUPercent }}
+{{- end }}

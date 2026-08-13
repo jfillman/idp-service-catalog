@@ -1,0 +1,37 @@
+{{/*
+Scheduled batch task per cronJobs: entry. Same container-building/env/volume
+sharing as job.yaml - see idp-application.batchContainer in _helpers.tpl.
+*/}}
+{{- range .Values.cronJobs }}
+{{- $container := fromYaml (include "idp-application.batchContainer" (dict "ctx" $ "entry" .)) }}
+{{- $volumes := fromYamlArray (include "idp-application.workloadVolumes" $) }}
+{{- $podSpec := dict "serviceAccountName" (include "idp-application.serviceAccountName" $) "restartPolicy" "OnFailure" "containers" (list $container) }}
+{{- if $volumes }}{{- $_ := set $podSpec "volumes" $volumes }}{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .name }}
+  namespace: {{ include "idp-application.namespace" $ }}
+  labels:
+    {{- include "idp-application.labels" $ | nindent 4 }}
+    platform.io/subcomponent: workload
+spec:
+  schedule: {{ .schedule | quote }}
+  concurrencyPolicy: {{ .concurrencyPolicy | default "Forbid" }}
+  suspend: {{ .suspend | default false }}
+  {{/* suspend's own zero value (false) IS the intended default, so the Sprig
+  `default` empty-value quirk that bit hook/backoffLimit/*JobsHistoryLimit doesn't
+  apply here - explicit false and "unset" both correctly resolve to false. */}}
+  successfulJobsHistoryLimit: {{ include "idp-application.intOr" (dict "map" . "key" "successfulJobsHistoryLimit" "default" 3) }}
+  failedJobsHistoryLimit: {{ include "idp-application.intOr" (dict "map" . "key" "failedJobsHistoryLimit" "default" 1) }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ include "idp-application.intOr" (dict "map" . "key" "backoffLimit" "default" 3) }}
+      template:
+        metadata:
+          labels:
+            {{- include "idp-application.labels" $ | nindent 12 }}
+        spec:
+          {{- toYaml $podSpec | nindent 10 }}
+---
+{{- end }}

@@ -1,0 +1,27 @@
+{{/*
+Generic, type-agnostic range loop over components: - §3's "Rendering mechanism":
+each entry's `type` maps to a `kind` via values.yaml's componentKinds table, and
+`spec:` passes straight through to the rendered XR untouched. This chart doesn't
+validate or branch on component-specific fields (redis size, oauth-server issuer,
+...) at all - the XRD's own OpenAPI schema does that when the XR lands. Adding a
+new Component XRD (Kafka, say) needs one new row in values.yaml's componentKinds
+table, never new template logic here.
+*/}}
+{{- range .Values.components }}
+apiVersion: {{ $.Values.attachedResourceApiVersion }}
+kind: {{ include "idp-application.componentKind" (dict "ctx" $ "type" .type) }}
+metadata:
+  name: {{ .name }}
+  namespace: {{ include "idp-application.namespace" $ }}
+  labels:
+    {{- include "idp-application.labels" $ | nindent 4 }}
+    platform.io/subcomponent: attached-component
+    platform.io/component-type: {{ .type }}
+spec:
+  environmentRef:
+    name: {{ include "idp-application.environmentRef" $ }}
+  {{- with .spec }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+---
+{{- end }}

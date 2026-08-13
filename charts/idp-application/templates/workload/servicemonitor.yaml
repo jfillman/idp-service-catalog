@@ -1,0 +1,30 @@
+{{/*
+Auto-wires Prometheus scraping from the same Service this chart already renders -
+kube-prometheus-stack is already installed cluster-side (idp_session_phase2_holmesgpt,
+namespace `observability`), so this is near-zero-cost: every app gets scraped
+without hand-authoring its own ServiceMonitor. serviceMonitor.additionalLabels is
+the escape hatch for whatever selector label the actual Prometheus CR on a given
+cluster requires (not confirmed - see values.yaml's own comment).
+*/}}
+{{- if and .Values.serviceMonitor.enabled (eq (include "idp-application.hasRollout" .) "true") }}
+{{- $firstPort := index .Values.rollout.ports 0 }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: workload
+    {{- with .Values.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "idp-application.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: {{ .Values.serviceMonitor.port | default $firstPort.name }}
+      path: {{ .Values.serviceMonitor.path }}
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

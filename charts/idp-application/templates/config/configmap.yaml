@@ -1,0 +1,27 @@
+{{/*
+List-of-objects, one ConfigMap per entry - §3's revised shape, answering both
+"multiple keys in one ConfigMap" (nest more entries in one data: block) and
+"multiple separate ConfigMap objects" (add another list entry) without picking one.
+
+Only entries with `data:` render an object here - an entry using
+`existingConfigMap:` instead references one this chart doesn't own, so there's
+nothing to render (the fail-fast validation for "set exactly one of the two" lives
+in idp-application.configMapObjectName, called from every template that needs the
+resolved name - workloadVolumeMounts/workloadVolumes/workloadEnvFrom - so a
+malformed entry still errors even though it never reaches this file).
+*/}}
+{{- range .Values.configMaps }}
+{{- if hasKey . "data" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .name }}
+  namespace: {{ include "idp-application.namespace" $ }}
+  labels:
+    {{- include "idp-application.labels" $ | nindent 4 }}
+    platform.io/subcomponent: config
+data:
+  {{- toYaml .data | nindent 2 }}
+---
+{{- end }}
+{{- end }}
