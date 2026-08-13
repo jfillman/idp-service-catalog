@@ -101,6 +101,10 @@ spec:
       previewService: {{ .Values.appName }}-preview
     {{- else }}
     canary:
+      {{- if .Values.rollout.canaryAnalysis }}
+      analysis:
+        {{- toYaml .Values.rollout.canaryAnalysis | nindent 8 }}
+      {{- end }}
       steps:
         {{- if .Values.rollout.steps }}
         {{- toYaml .Values.rollout.steps | nindent 8 }}

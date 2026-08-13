@@ -76,6 +76,16 @@ rollout:
   steps: [] # escape hatch for a custom canary/blueGreen step sequence; platform default used when empty
     # (§3 "Still open" item 3 - the platform default step sequence itself isn't designed
     # yet, so this chart ships no default steps of its own yet - see chart README)
+  canaryAnalysis: {} # NOT in §3's schema - real gap found live migrating widget-api
+    # off the ai-rollout prototype (2026-08-13): strategy.canary.analysis (continuous
+    # background analysis against an AnalysisTemplate, run alongside every step - a
+    # SIBLING field to steps, not nested inside it) has no curated shape here, only
+    # this raw passthrough, same idiom as `steps` itself. Typical shape:
+    # {templates: [{templateName: <name>}], args: [{name: canary-hash, valueFrom:
+    # {podTemplateHashValue: Latest}}], startingStep: 1} - templateName references
+    # one of this release's own analysisTemplates: entries (or a platform-curated
+    # ClusterAnalysisTemplate). Only rendered when canary strategy is active AND this
+    # is non-empty - blueGreen has no analysis field at this level.
 
   # Curated, safe-default escape hatches - each toYaml'd straight into the main
   # container / pod template when set.
