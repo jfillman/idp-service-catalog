@@ -1,50 +1,39 @@
-# Pipeline shape matches ai-rollout/crossplane/composition/composition.yaml
-# (render step + function-auto-ready), but with its OWN function-go-templating
-# registration (function-go-templating-slo, see
-# gitops-cluster-dev/10-crds-operators/crossplane/function-slo-templates.yaml)
-# instead of reusing the shared `function-go-templating` + `mount-templates`
-# mount the ai-rollout Application Composition already owns - that mount's
-# single ConfigMap holds ai-rollout's own 4 files (rollout/service/
-# analysistemplate/configmap), all keyed on spec.parameters.* fields an SLO XR
-# doesn't have. Pointing a second Composition's dirPath at that same mount
-# would render those 4 templates against every SLO XR too.
+# GENERATED FILE - do not hand-edit the pipeline's `input.inline.template`
+# block below. Edit templates/*.yaml instead, then run ./build-composition.sh
+# to regenerate this file. See that script's own header for why this
+# Composition uses `source: Inline` (embedding template content directly)
+# rather than `source: FileSystem` against a shared mount - short version: a
+# second Function object pointing at the same package as the already-
+# installed `function-go-templating` corrupted Crossplane's package-manager
+# dependency-lock graph for every OTHER Function on the cluster, proved live
+# on kind-dev (function-auto-ready lost its runtime Deployment entirely,
+# degrading the unrelated widget-api Rollout's Ready-status reporting too).
+# Inline mode reuses the existing shared Function - no new registration, no
+# collision, and the templates are now fully GitOps-tracked in this file
+# instead of a live-cluster-only ConfigMap.
 #
-# Renders a Sloth (sloth.dev) `PrometheusServiceLevel` + a Grafana dashboard
+# Renders Sloth's (sloth.dev) `PrometheusServiceLevel` + a Grafana dashboard
 # ConfigMap - NOT a PrometheusRule directly. Sloth's own controller
 # (gitops-cluster-dev/10-crds-operators/sloth/) does the spec->PrometheusRule
-# translation. See service-catalog-design.md Item 4's revision history: this
-# Composition originally hand-rolled the multi-window-multi-burn-rate PromQL
-# itself (matching a kube-slo-style article the user found), then switched to
-# wrapping Sloth - the hand-rolled version worked and was live-verified, but
-# Sloth gives the full canonical 4-window pattern for free instead of a
-# simplified 2-tier one, and matches this project's "wrap, don't reinvent"
-# convention used everywhere else (Argo Rollouts, ESO, component charts).
+# translation. See idp/docs/service-catalog-design.md Item 4's revision
+# history: this Composition originally hand-rolled the multi-window-multi-
+# burn-rate PromQL itself (matching a kube-slo-style article), then switched
+# to wrapping Sloth - full canonical 4-window pattern for free instead of a
+# hand-rolled 2-tier simplification, matching this project's "wrap, don't
+# reinvent" convention used everywhere else (Argo Rollouts, ESO, component
+# charts).
 #
-# Delimiters: << >> instead of ai-rollout's [[ ]] or Go's default {{ }}. Two
-# reasons, not one - and BOTH still apply even though this Composition no
-# longer emits raw PromQL/PrometheusRule YAML itself:
+# Delimiters: << >> instead of ai-rollout's [[ ]] or Go's default {{ }}:
 #   1. PromQL range-vector syntax needs literal `[5m]` right next to templated
 #      output - `[[ $w ]]` next to a literal `[` creates a 3-bracket run
-#      ([[[) that Go's template lexer misparses.
+#      that Go's template lexer misparses.
 #   2. Sloth's OWN templating syntax (`{{.window}}`, required literally inside
-#      every errorQuery/totalQuery - see prometheusservicelevel.yaml) must
-#      reach the rendered PrometheusServiceLevel completely untouched, for
-#      Sloth's controller to substitute per-window at generation time - not
-#      for this templating pass to consume. `{{ }}` is exactly Go's default
-#      delimiter, so it has to be something else; `<< >>` also happens to
-#      dodge Grafana dashboard JSON's legacy `[[var]]` substitution syntax,
-#      which `[[ ]]` would not.
-#
-# Live-verified quirk (kind-dev, 2026-08-13): `kubectl get functions.pkg.
-# crossplane.io function-go-templating-slo` shows Healthy: False - "cannot
-# resolve package dependencies: ... node xpkg.crossplane.io/crossplane-contrib/
-# function-go-templating already exists" - Crossplane's package-manager lock
-# graph objects to two Function objects pointing at the identical package
-# reference as the existing `function-go-templating`. Confirmed functionally
-# harmless: the runtime pod comes up and the pipeline step executes correctly
-# regardless (proven end-to-end, both on the original hand-rolled version and
-# again on this Sloth-wrapping version). Cosmetic package-manager bookkeeping
-# only, not a functional blocker - not otherwise fixed/worked around this pass.
+#      every errorQuery/totalQuery - see templates/prometheusservicelevel.yaml)
+#      must reach the rendered PrometheusServiceLevel completely untouched,
+#      for Sloth's controller to substitute per-window at generation time -
+#      not for this templating pass to consume. `{{ }}` is exactly Go's
+#      default delimiter, so it has to be something else; `<< >>` also
+#      dodges Grafana dashboard JSON's legacy `[[var]]` substitution syntax.
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
@@ -57,13 +46,223 @@ spec:
   pipeline:
     - step: render-slo-resources
       functionRef:
-        name: function-go-templating-slo
+        name: function-go-templating
       input:
         apiVersion: gotemplating.fn.crossplane.io/v1beta1
         kind: GoTemplate
-        source: FileSystem
-        fileSystem:
-          dirPath: /templates
+        source: Inline
+        inline:
+          template: |
+            # Rendered by function-go-templating (source: Inline, see composition.yaml/
+            # build-composition.sh), using double-angle-bracket delimiters
+            # (see composition.yaml). `grafana_dashboard: "1"` label matches kube-prometheus-
+            # stack's Grafana sidecar config (label=grafana_dashboard, labelValue="1",
+            # searchNamespace=ALL - verified live), so this ConfigMap is auto-discovered
+            # regardless of which namespace the owning SLO XR (and therefore this
+            # ConfigMap) lands in. Sloth itself doesn't generate dashboards in its
+            # Kubernetes-controller/operator mode (confirmed against its Helm chart's
+            # deployment args - only `kubernetes-controller`, no dashboard-related flag;
+            # dashboard generation is a separate CLI-only feature) - this ConfigMap is
+            # still ours to render.
+            #
+            # NOTE: never write two literal `<` or `>` characters adjacent to each other
+            # anywhere in this file outside a real action, including in comments - the
+            # lexer scans raw text for the delimiter pair regardless of YAML comment
+            # syntax, and an accidental empty action fails the whole render.
+            #
+            # The dashboard JSON below is static literal text with small single-line
+            # substitutions piped through toJson - never raw interpolation into a
+            # hand-quoted JSON string, since service/slo values containing a literal quote
+            # character would otherwise break the JSON. Keeping the surrounding JSON
+            # structure itself static (not built as a nested Sprig dict) avoids YAML
+            # block-scalar indentation risk entirely, since none of the substitutions
+            # introduce their own newlines.
+            #
+            # Metric names/labels below are Sloth's own (confirmed live against a real
+            # generated PrometheusRule, not guessed from docs - Sloth's docs site didn't
+            # actually document these): `sloth_slo`/`sloth_service` identify the series
+            # (deliberately NOT `sloth_id`, which is derived from the
+            # PrometheusServiceLevel object's own name - prometheusservicelevel.yaml
+            # names that object `<xrName>-slo`, an implementation detail this dashboard
+            # shouldn't need to know about). `slo:sli_error:ratio_rate5m` is the 5m SLI
+            # error ratio; `slo:objective:ratio` and `slo:period_error_budget_remaining:
+            # ratio` are Sloth's own metadata recording rules - the budget-remaining one
+            # in particular replaces a hand-rolled formula the previous (pre-Sloth)
+            # version of this template computed itself.
+            #
+            # Datasource `uid: "prometheus"` confirmed live against a real Grafana
+            # instance (kube-prometheus-stack's bundled default datasource).
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $service := $spec.service >>
+            <<- $sliExpr := printf "(1 - slo:sli_error:ratio_rate5m{sloth_slo=%q,sloth_service=%q}) * 100" $xrName $service >>
+            <<- $objectiveExpr := printf "slo:objective:ratio{sloth_slo=%q,sloth_service=%q} * 100" $xrName $service >>
+            <<- $budgetExpr := printf "slo:period_error_budget_remaining:ratio{sloth_slo=%q,sloth_service=%q} * 100" $xrName $service >>
+            <<- $title := printf "SLO: %s (%s)" $service $xrName >>
+            <<- $uid := printf "slo-%s" $xrName >>
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: <<$xrName>>-slo-dashboard
+              labels:
+                grafana_dashboard: "1"
+              annotations:
+                <<setResourceNameAnnotation "dashboard-configmap">>
+            data:
+              <<$xrName>>.json: |
+                {
+                  "id": null,
+                  "uid": <<$uid | toJson>>,
+                  "title": <<$title | toJson>>,
+                  "tags": ["slo", <<$service | toJson>>],
+                  "schemaVersion": 39,
+                  "version": 1,
+                  "editable": true,
+                  "graphTooltip": 0,
+                  "timezone": "browser",
+                  "refresh": "1m",
+                  "time": { "from": "now-7d", "to": "now" },
+                  "templating": { "list": [] },
+                  "annotations": { "list": [] },
+                  "panels": [
+                    {
+                      "id": 1,
+                      "type": "timeseries",
+                      "title": "SLI over time",
+                      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+                      "datasource": { "type": "prometheus", "uid": "prometheus" },
+                      "fieldConfig": {
+                        "defaults": {
+                          "unit": "percent",
+                          "min": 0,
+                          "max": 100,
+                          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+                        },
+                        "overrides": []
+                      },
+                      "targets": [
+                        { "refId": "A", "expr": <<$sliExpr | toJson>>, "legendFormat": "SLI (5m)" },
+                        { "refId": "B", "expr": <<$objectiveExpr | toJson>>, "legendFormat": "Objective" }
+                      ]
+                    },
+                    {
+                      "id": 2,
+                      "type": "gauge",
+                      "title": "Error budget remaining",
+                      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+                      "datasource": { "type": "prometheus", "uid": "prometheus" },
+                      "fieldConfig": {
+                        "defaults": {
+                          "unit": "percent",
+                          "min": 0,
+                          "max": 100,
+                          "thresholds": {
+                            "mode": "absolute",
+                            "steps": [
+                              { "color": "red", "value": null },
+                              { "color": "yellow", "value": 20 },
+                              { "color": "green", "value": 50 }
+                            ]
+                          }
+                        },
+                        "overrides": []
+                      },
+                      "targets": [
+                        { "refId": "A", "expr": <<$budgetExpr | toJson>> }
+                      ]
+                    }
+                  ]
+                }
+            ---
+            # Rendered by function-go-templating (source: Inline, see composition.yaml/
+            # build-composition.sh), using double-angle-bracket delimiters
+            # (see composition.yaml). Generates Sloth's own CRD (sloth.slok.dev/v1
+            # PrometheusServiceLevel) instead of a PrometheusRule directly - Sloth's own
+            # controller (gitops-cluster-dev/10-crds-operators/sloth/) does the
+            # spec->PrometheusRule translation, including the full canonical Google SRE
+            # workbook multi-window-multi-burn-rate pattern (page + ticket tiers) with no
+            # burn-rate fields needed from us at all.
+            #
+            # NOTE: never write two literal `<` or `>` characters adjacent to each other
+            # anywhere in this file outside a real action, including in comments - the
+            # lexer scans raw text for the delimiter pair regardless of YAML comment
+            # syntax, and an accidental empty action fails the whole render (bit us once
+            # already on the previous hand-rolled version of this file).
+            #
+            # `{{.window}}` in errorQuery/totalQuery below is Sloth's OWN Go-template
+            # placeholder syntax (not ours) - it must reach the PrometheusServiceLevel
+            # object completely literally, for Sloth's controller to substitute per-window
+            # at generation time. Because this Composition step uses double-angle-bracket
+            # delimiters instead of Go template's curly-brace default (see
+            # composition.yaml), that text passes straight through untouched - same
+            # mechanism that already protects Prometheus's own {{ $value }} alert-
+            # annotation syntax elsewhere in this catalog.
+            #
+            # metadata.labels: release: kube-prometheus-stack below is not decorative -
+            # it's the ONLY thing that makes kube-prometheus-stack's Prometheus actually
+            # load the PrometheusRule Sloth generates from this object. Confirmed live by
+            # reading Sloth's own source (internal/plugin/k8stransform/
+            # prom_operator_prometheus_rule_v1/plugin.go's `u.SetLabels(kmeta.Labels)`,
+            # fed by internal/app/kubecontroller/handler.go from THIS object's own
+            # metadata.labels): Sloth's `sloth.extraLabels` Helm value (also set to
+            # release=kube-prometheus-stack, see the sloth Application) only stamps that
+            # label onto each individual generated recording/alert RULE's own `labels:`,
+            # never onto the generated PrometheusRule K8s OBJECT's metadata.labels, which
+            # is what Prometheus's ruleSelector actually matches on. Without this, `kubectl
+            # get prometheusrule` shows the object created, `status.promOpRulesGenerated:
+            # true` looks healthy, and Prometheus simply never loads it - no error
+            # anywhere. (Also hit live: kubelet's ConfigMap-volume propagation into the
+            # Prometheus pod lagged ~35 minutes on this cluster before the rules actually
+            # appeared in Prometheus's own /api/v1/rules - not a bug in this template, but
+            # worth knowing before assuming a fresh SLO isn't working.)
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $service := $spec.service >>
+            <<- $indicator := $spec.indicator >>
+            <<- $objective := $spec.objective >>
+
+            <<- if eq $indicator.type "availability" >>
+              <<- if not $indicator.errorFilter >>
+                <<- fail "indicator.type=availability requires indicator.errorFilter" >>
+              <<- end >>
+            <<- else if eq $indicator.type "latency" >>
+              <<- if not $indicator.latencyThreshold >>
+                <<- fail "indicator.type=latency requires indicator.latencyThreshold" >>
+              <<- end >>
+            <<- else >>
+              <<- fail (printf "indicator.type must be availability or latency, got %q" $indicator.type) >>
+            <<- end >>
+
+            <<- $errorQuery := "" >>
+            <<- $totalQuery := "" >>
+            <<- if eq $indicator.type "availability" >>
+            <<- $errorQuery = printf "sum(rate(%s{%s,%s}[{{.window}}]))" $indicator.metric $indicator.totalFilter $indicator.errorFilter >>
+            <<- $totalQuery = printf "sum(rate(%s{%s}[{{.window}}]))" $indicator.metric $indicator.totalFilter >>
+            <<- else >>
+            <<- $errorQuery = printf "sum(rate(%s_count{%s}[{{.window}}])) - sum(rate(%s_bucket{%s,le=%q}[{{.window}}]))" $indicator.metric $indicator.totalFilter $indicator.metric $indicator.totalFilter $indicator.latencyThreshold >>
+            <<- $totalQuery = printf "sum(rate(%s_count{%s}[{{.window}}]))" $indicator.metric $indicator.totalFilter >>
+            <<- end >>
+
+            apiVersion: sloth.slok.dev/v1
+            kind: PrometheusServiceLevel
+            metadata:
+              name: <<$xrName>>-slo
+              labels:
+                release: kube-prometheus-stack
+              annotations:
+                <<setResourceNameAnnotation "prometheusservicelevel">>
+            spec:
+              service: <<$service | toJson>>
+              slos:
+                - name: <<$xrName>>
+                  objective: <<$objective>>
+                  sli:
+                    events:
+                      errorQuery: <<$errorQuery | toJson>>
+                      totalQuery: <<$totalQuery | toJson>>
+                  alerting:
+                    name: <<printf "%s-slo-alert" $xrName | toJson>>
+            ---
         delims:
           left: "<<"
           right: ">>"

@@ -41,39 +41,60 @@ The ingress-controller namespace selector is resolved too now (Contour,
 confirmed live) - remaining open items: attached-resource API group, who
 provisions the image-pull Secret.
 
-**`SLO` XRD + Composition real bugs found live on `kind-dev`** (see the
-Composition/template files' own header comments for full detail): (1) a
-literal `<< >>` mention inside a plain comment collided with the templating
-engine's own delimiter scan and broke the whole render — fixed by rewording,
-now called out as a standing gotcha in every template file's header; (2)
-Crossplane's controller `ServiceAccount` had no RBAC for `PrometheusRule`
-(only `argoproj.io`/`batch`, from the ai-rollout Composition) — every SLO XR
-failed silently with a `forbidden` event until `native-resources-rbac.yaml`
-(recreated from live state, since it existed on-cluster but was never
-GitOps-tracked) was extended; (3) `function-go-templating-slo` reports
-`Healthy: False` (package-manager lock-graph collision with the existing
-`function-go-templating` Function, both pointing at the same package
-reference) but is functionally harmless — proven by a real SLO XR composing
-correctly and Prometheus loading/evaluating the resulting rules against real
-data anyway.
-
 **`SLO` XRD + Composition — first XRD in the catalog, live-verified on
-`kind-dev`.** Item 4's design, built hand-rolled (not wrapping Sloth/OpenSLO,
-an explicit deviation from the design doc's earlier lean): one `SLO` XRD
-(`catalog.idp.io/v1alpha1`, Crossplane v2 namespaced) whose Composition
-(`function-go-templating`, its own dedicated `function-go-templating-slo`
-Function/mount — see `compositions/slo/composition.yaml`'s header) renders a
-`PrometheusRule` (recording rules per burn-rate window + the compliance
-window, multi-window-multi-burn-rate alerting per Google's SRE workbook
-pattern) and a Grafana dashboard `ConfigMap` (kube-prometheus-stack sidecar
-convention). `indicator.type: availability|latency` both covered. See
-`compositions/slo/example/README.md` for offline template-logic testing
-(`render-local.sh`, no cluster needed) and the Composition/template files'
-own header comments for the concrete Go-template gotchas hit along the way
-(delimiter collisions with both PromQL's `[5m]` syntax and Prometheus's own
-`{{ $value }}` alert-annotation templating, YAML block-scalar indentation
-risk with dynamically-generated multi-line PromQL, one literal-delimiter-in-
-a-comment bug caught by the offline render).
+`kind-dev`.** Item 4's design (`idp/docs/service-catalog-design.md`), wraps
+Sloth (sloth.dev) rather than hand-rolling multi-window-multi-burn-rate
+PromQL: one `SLO` XRD (`catalog.idp.io/v1alpha1`, Crossplane v2 namespaced,
+just `environmentRef`/`service`/`objective`/`indicator` - no burn-rate or
+window fields, Sloth computes the full canonical pattern itself) whose
+Composition (`function-go-templating`, `source: Inline` - see
+`compositions/slo/build-composition.sh`) renders a Sloth
+`PrometheusServiceLevel` (Sloth's own controller, installed via
+`gitops-cluster-dev/10-crds-operators/sloth/`, does the
+spec→`PrometheusRule` translation) and a Grafana dashboard `ConfigMap`
+(kube-prometheus-stack sidecar convention). `indicator.type:
+availability|latency` both covered.
+
+Went through a hand-rolled revision first (matching a kube-slo-style article
+the user found, own PromQL/burn-rate math, no Sloth dependency) before
+switching - both were live-verified independently; see
+`idp/docs/service-catalog-design.md` Item 4's revision history for the
+reasoning. Real bugs found live along the way, worth knowing before touching
+these files (full detail in the Composition/template files' own header
+comments):
+- A literal `<< >>` mention inside a plain YAML comment collides with the
+  templating engine's own delimiter scan and breaks the whole render - the
+  lexer doesn't know about YAML comment syntax. Standing gotcha called out in
+  every template file's header now.
+- Crossplane's controller `ServiceAccount` has no built-in RBAC for native
+  resource kinds a Composition composes directly - needed extending
+  `native-resources-rbac.yaml` for `PrometheusServiceLevel` (and, during the
+  hand-rolled revision, `PrometheusRule`).
+- **A second `Function` object pointing at the same package as an
+  already-installed one doesn't just mark itself unhealthy - it corrupts
+  Crossplane v2.3.4's package-manager dependency-lock graph for every OTHER
+  Function on the cluster.** Tried giving the SLO Composition its own
+  dedicated `function-go-templating-slo` Function + mount to keep its
+  templates isolated from the ai-rollout Application Composition's own
+  `/templates` mount; on a freshly-bootstrapped cluster this left
+  `function-auto-ready` with no runtime Deployment at all, silently degrading
+  the unrelated `widget-api` Rollout's Ready-status reporting. Fixed by
+  switching to `source: Inline` instead (templates embedded directly in the
+  Composition, generated from `templates/*.yaml` via `build-composition.sh`)
+  - reuses the one shared `function-go-templating` Function, no new
+  registration, no collision, and the templates are now fully GitOps-tracked
+  in the Composition itself instead of a live-cluster-only ConfigMap.
+- Sloth's own CRD claims `slo`/`slos` as `categories` (not shortNames) on
+  `prometheusservicelevels` - this XRD's own `slo` shortName collided with
+  that (`kubectl get slo` resolved to Sloth's category and 404'd looking for
+  the wrong resource type). Removed; use `kubectl get slos.catalog.idp.io` or
+  plain `slos` (this resource's actual plural, unambiguous).
+- kube-prometheus-stack's `Prometheus` CR only loads a `PrometheusRule` if
+  the object itself carries `release: kube-prometheus-stack` - Sloth's own
+  `extraLabels` Helm value only stamps that onto each individual generated
+  rule's `labels:`, not the object's `metadata.labels`. Fixed by having the
+  Composition stamp `metadata.labels` on the `PrometheusServiceLevel` it
+  generates; Sloth propagates that onto the `PrometheusRule` it creates.
 
 **Not started yet**: the rest of the v1 XRD catalog (`NodeJSApplication`,
 `SpringBootApplication`, `ApplicationEnvironment`, and the Component XRDs —
@@ -102,5 +123,5 @@ charts/
 xrds/
   slo.yaml                     SLO XRD (catalog.idp.io/v1alpha1)
 compositions/
-  slo/                         SLO Composition + function-go-templating templates + local render tooling
+  slo/                         SLO Composition (source: Inline) + templates + build-composition.sh
 ```

@@ -328,27 +328,21 @@ components: [] # Attached - see "Rendering mechanism" in §3
 #   name: cache
 #   spec: {size: small}
 
-slos: [] # Attached - rendered into the `SLO` XRD (idp-service-catalog/xrds/slo.yaml)
+slos: [] # Attached - rendered into the `SLO` XRD (idp-service-catalog/xrds/slo.yaml),
+         # which wraps Sloth (sloth.dev) - no window/burn-rate fields here, Sloth
+         # computes the full canonical multi-window-multi-burn-rate pattern itself
+         # from just `objective`. Compliance window is a cluster-wide default
+         # (sloth.defaultSloPeriod, see gitops-cluster-dev/10-crds-operators/sloth/),
+         # not a per-SLO setting.
 # - name: availability
 #   service: checkout-api        # PromQL label-matcher value - required
 #   objective: 99.9
-#   window: 30d                   # optional, defaults to 30d
 #   indicator:
 #     type: availability           # or: latency
 #     metric: http_requests_total
 #     totalFilter: 'service="checkout-api"'
 #     errorFilter: 'code=~"5.."'   # required when type: availability
 #     # latencyThreshold: "0.3"    # required when type: latency, instead of errorFilter
-#   alerting:                      # optional - defaults to the standard 2%/1h + 5%/6h
-#     burnRates:                   # Google SRE workbook burn-rate tiers
-#       - severity: critical
-#         shortWindow: 5m
-#         longWindow: 1h
-#         factor: 14.4
-#       - severity: warning
-#         shortWindow: 30m
-#         longWindow: 6h
-#         factor: 6
 
 # NOT in §3's schema. The generic components:/slos: range loop (§3 "Rendering
 # mechanism") needs a type -> {kind, apiVersion} lookup table, and the doc's own v1

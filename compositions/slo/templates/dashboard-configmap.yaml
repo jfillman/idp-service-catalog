@@ -1,4 +1,5 @@
-# Rendered by function-go-templating-slo, using double-angle-bracket delimiters
+# Rendered by function-go-templating (source: Inline, see composition.yaml/
+# build-composition.sh), using double-angle-bracket delimiters
 # (see composition.yaml). `grafana_dashboard: "1"` label matches kube-prometheus-
 # stack's Grafana sidecar config (label=grafana_dashboard, labelValue="1",
 # searchNamespace=ALL - verified live), so this ConfigMap is auto-discovered

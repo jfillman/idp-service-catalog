@@ -30,8 +30,13 @@ spec:
     kind: SLO
     plural: slos
     singular: slo
-    shortNames:
-      - slo
+    # No shortNames - `slo`/`slos` collide with Sloth's own CRD, which claims
+    # both as `categories` (not shortNames) on `prometheusservicelevels`.
+    # Confirmed live: `kubectl get slo` resolved to Sloth's category grouping
+    # instead of this resource's shortname and 404'd looking for a
+    # PrometheusServiceLevel that didn't exist yet - use `kubectl get
+    # slos.catalog.idp.io` (or plain `slos`, which is this resource's actual
+    # plural, not a category, and wins unambiguously) instead.
   scope: Namespaced
   versions:
     - name: v1alpha1

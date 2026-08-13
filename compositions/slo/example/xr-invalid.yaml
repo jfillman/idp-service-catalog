@@ -13,5 +13,6 @@ spec:
     metric: http_requests_total
     totalFilter: 'service="checkout-api"'
     # errorFilter deliberately omitted - exercises the template's fail() guard
-    # (the backstop for xrds/slo.yaml's CEL validation). Expected: render-local.sh
-    # exits non-zero with "indicator.type=availability requires indicator.errorFilter".
+    # (the backstop for xrds/slo.yaml's CEL validation). Expected:
+    # `crossplane render` exits non-zero with "indicator.type=availability
+    # requires indicator.errorFilter".

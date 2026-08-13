@@ -1,26 +1,26 @@
 # SLO Composition — local render examples
 
 Fast offline check of the templates' Go-template syntax and branching logic,
-no cluster needed.
+no cluster needed. Because the Composition uses `source: Inline` (see
+`../build-composition.sh`), `../composition.yaml` is directly renderable as-is
+— no wrapper script needed.
 
 ```shell
-./render-local.sh xr-availability.yaml   # indicator.type: availability
-./render-local.sh xr-latency.yaml        # indicator.type: latency
-./render-local.sh xr-invalid.yaml        # missing errorFilter - expected to fail
+crossplane render xr-availability.yaml ../composition.yaml functions.yaml -x -r   # indicator.type: availability
+crossplane render xr-latency.yaml ../composition.yaml functions.yaml -x -r        # indicator.type: latency
+crossplane render xr-invalid.yaml ../composition.yaml functions.yaml -x -r        # missing errorFilter - expected to fail
 ```
 
 Requires Docker (`crossplane render` pulls and runs `function-go-templating` /
 `function-auto-ready` in containers by default).
 
-**Why `render-local.sh` builds a throwaway Composition instead of using
-`../composition.yaml` directly**: the real Composition uses `source:
-FileSystem` against a ConfigMap mounted via a `DeploymentRuntimeConfig` on the
-live cluster (see `../../../gitops-cluster-dev/10-crds-operators/crossplane/
-function-slo-templates.yaml`) — `crossplane render`'s Docker-based local
-runner has no equivalent local mount. The script concatenates `../templates/
-*.yaml` into a `source: Inline` copy of the same Composition (same delimiters)
-purely for local iteration. This exercises the template *logic* (branching on
-`indicator.type`, burn-window dedup, quote-escaping via `toJson`) but not the
-FileSystem/ConfigMap delivery mechanism itself — that only gets exercised by
-actually applying `../composition.yaml` + the generated `slo-templates`
-ConfigMap to a real cluster.
+**If you edit `../templates/*.yaml`**, run `../build-composition.sh` first to
+regenerate `../composition.yaml` from them before re-running these examples —
+the templates are the maintainable source, `composition.yaml` is generated
+and GitOps-tracked.
+
+These fixtures only exercise the Composition's template logic (branching on
+`indicator.type`, quote-escaping via `toJson`) — they don't exercise Sloth's
+own `PrometheusServiceLevel` → `PrometheusRule` translation, which only
+happens on a real cluster with `sloth-operator` running
+(`gitops-cluster-dev/10-crds-operators/sloth/`).

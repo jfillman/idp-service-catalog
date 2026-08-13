@@ -1,4 +1,5 @@
-# Rendered by function-go-templating-slo, using double-angle-bracket delimiters
+# Rendered by function-go-templating (source: Inline, see composition.yaml/
+# build-composition.sh), using double-angle-bracket delimiters
 # (see composition.yaml). Generates Sloth's own CRD (sloth.slok.dev/v1
 # PrometheusServiceLevel) instead of a PrometheusRule directly - Sloth's own
 # controller (gitops-cluster-dev/10-crds-operators/sloth/) does the
