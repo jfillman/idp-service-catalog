@@ -1,0 +1,87 @@
+# Rendered by function-go-templating-slo, using double-angle-bracket delimiters
+# (see composition.yaml). Generates Sloth's own CRD (sloth.slok.dev/v1
+# PrometheusServiceLevel) instead of a PrometheusRule directly - Sloth's own
+# controller (gitops-cluster-dev/10-crds-operators/sloth/) does the
+# spec->PrometheusRule translation, including the full canonical Google SRE
+# workbook multi-window-multi-burn-rate pattern (page + ticket tiers) with no
+# burn-rate fields needed from us at all.
+#
+# NOTE: never write two literal `<` or `>` characters adjacent to each other
+# anywhere in this file outside a real action, including in comments - the
+# lexer scans raw text for the delimiter pair regardless of YAML comment
+# syntax, and an accidental empty action fails the whole render (bit us once
+# already on the previous hand-rolled version of this file).
+#
+# `{{.window}}` in errorQuery/totalQuery below is Sloth's OWN Go-template
+# placeholder syntax (not ours) - it must reach the PrometheusServiceLevel
+# object completely literally, for Sloth's controller to substitute per-window
+# at generation time. Because this Composition step uses double-angle-bracket
+# delimiters instead of Go template's curly-brace default (see
+# composition.yaml), that text passes straight through untouched - same
+# mechanism that already protects Prometheus's own {{ $value }} alert-
+# annotation syntax elsewhere in this catalog.
+#
+# metadata.labels: release: kube-prometheus-stack below is not decorative -
+# it's the ONLY thing that makes kube-prometheus-stack's Prometheus actually
+# load the PrometheusRule Sloth generates from this object. Confirmed live by
+# reading Sloth's own source (internal/plugin/k8stransform/
+# prom_operator_prometheus_rule_v1/plugin.go's `u.SetLabels(kmeta.Labels)`,
+# fed by internal/app/kubecontroller/handler.go from THIS object's own
+# metadata.labels): Sloth's `sloth.extraLabels` Helm value (also set to
+# release=kube-prometheus-stack, see the sloth Application) only stamps that
+# label onto each individual generated recording/alert RULE's own `labels:`,
+# never onto the generated PrometheusRule K8s OBJECT's metadata.labels, which
+# is what Prometheus's ruleSelector actually matches on. Without this, `kubectl
+# get prometheusrule` shows the object created, `status.promOpRulesGenerated:
+# true` looks healthy, and Prometheus simply never loads it - no error
+# anywhere. (Also hit live: kubelet's ConfigMap-volume propagation into the
+# Prometheus pod lagged ~35 minutes on this cluster before the rules actually
+# appeared in Prometheus's own /api/v1/rules - not a bug in this template, but
+# worth knowing before assuming a fresh SLO isn't working.)
+<<- $spec := .observed.composite.resource.spec >>
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $service := $spec.service >>
+<<- $indicator := $spec.indicator >>
+<<- $objective := $spec.objective >>
+
+<<- if eq $indicator.type "availability" >>
+  <<- if not $indicator.errorFilter >>
+    <<- fail "indicator.type=availability requires indicator.errorFilter" >>
+  <<- end >>
+<<- else if eq $indicator.type "latency" >>
+  <<- if not $indicator.latencyThreshold >>
+    <<- fail "indicator.type=latency requires indicator.latencyThreshold" >>
+  <<- end >>
+<<- else >>
+  <<- fail (printf "indicator.type must be availability or latency, got %q" $indicator.type) >>
+<<- end >>
+
+<<- $errorQuery := "" >>
+<<- $totalQuery := "" >>
+<<- if eq $indicator.type "availability" >>
+<<- $errorQuery = printf "sum(rate(%s{%s,%s}[{{.window}}]))" $indicator.metric $indicator.totalFilter $indicator.errorFilter >>
+<<- $totalQuery = printf "sum(rate(%s{%s}[{{.window}}]))" $indicator.metric $indicator.totalFilter >>
+<<- else >>
+<<- $errorQuery = printf "sum(rate(%s_count{%s}[{{.window}}])) - sum(rate(%s_bucket{%s,le=%q}[{{.window}}]))" $indicator.metric $indicator.totalFilter $indicator.metric $indicator.totalFilter $indicator.latencyThreshold >>
+<<- $totalQuery = printf "sum(rate(%s_count{%s}[{{.window}}]))" $indicator.metric $indicator.totalFilter >>
+<<- end >>
+
+apiVersion: sloth.slok.dev/v1
+kind: PrometheusServiceLevel
+metadata:
+  name: <<$xrName>>-slo
+  labels:
+    release: kube-prometheus-stack
+  annotations:
+    <<setResourceNameAnnotation "prometheusservicelevel">>
+spec:
+  service: <<$service | toJson>>
+  slos:
+    - name: <<$xrName>>
+      objective: <<$objective>>
+      sli:
+        events:
+          errorQuery: <<$errorQuery | toJson>>
+          totalQuery: <<$totalQuery | toJson>>
+      alerting:
+        name: <<printf "%s-slo-alert" $xrName | toJson>>

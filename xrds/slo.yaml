@@ -9,6 +9,17 @@
 # straight under spec:, alongside spec.environmentRef. kind/plural/group match
 # what _helpers.tpl already hardcodes (type: slo -> kind: SLO) and what
 # values.yaml already sets (attachedResourceApiVersion: catalog.idp.io/v1alpha1).
+#
+# Wraps Sloth (sloth.dev) rather than hand-rolling multi-window-multi-burn-rate
+# PromQL - see service-catalog-design.md Item 4's revision history. This is
+# WHY the schema is this small: no `window` field (Sloth's compliance/error-
+# budget period is a controller-wide default, not per-SLO - confirmed against
+# Sloth's own PrometheusServiceLevel CRD, which has no such field under
+# spec.slos[]) and no `alerting.burnRates` list (Sloth computes the full
+# canonical 4-window pattern - page + ticket tiers - automatically from just
+# `objective`, verified live). The prior hand-rolled revision of this XRD had
+# both; both are gone now, not because the concepts don't exist, but because
+# Sloth owns them.
 apiVersion: apiextensions.crossplane.io/v2
 kind: CompositeResourceDefinition
 metadata:
@@ -56,10 +67,11 @@ spec:
                   type: string
                   description: >-
                     Value every generated PromQL query matches against the
-                    `service` label. Required (not derived from the XR name)
-                    so a query is never accidentally left unscoped. Also used
-                    literally in the generated PrometheusRule/dashboard, so
-                    it's pattern-constrained to a safe PromQL/JSON charset.
+                    `service` label, and Sloth's own `spec.service` grouping
+                    field. Required (not derived from the XR name) so a query
+                    is never accidentally left unscoped. Also used literally
+                    in the generated PrometheusServiceLevel/dashboard, so it's
+                    pattern-constrained to a safe PromQL/JSON charset.
                   minLength: 1
                   pattern: '^[a-zA-Z0-9_.-]+$'
 
@@ -70,19 +82,6 @@ spec:
                   exclusiveMinimum: true
                   maximum: 100
 
-                window:
-                  type: string
-                  description: >-
-                    Rolling compliance window for the error-budget calculation
-                    and the dashboard's budget-remaining panel. The default
-                    alerting.burnRates factors below are calibrated for the
-                    default window (30d) per the Google SRE workbook's
-                    factor = budget_fraction / (alert_window / compliance_window)
-                    formula - override window without recomputing factor and
-                    the effective budget-burn-per-alert shifts proportionally.
-                  default: "30d"
-                  pattern: '^([0-9]+(ms|s|m|h|d|w|y))+$'
-
                 indicator:
                   type: object
                   description: >-
@@ -92,10 +91,9 @@ spec:
                     cert-manager's Issuer/ExternalDNS-style discriminated
                     configs. errorFilter is required when type=availability;
                     latencyThreshold is required when type=latency. The
-                    Composition's PrometheusRule template also `fail`s on a
-                    missing type-required field as a backstop, in case CEL
-                    validation isn't enforced on the installed Crossplane
-                    version.
+                    Composition's template also `fail`s on a missing
+                    type-required field as a backstop, in case CEL validation
+                    isn't enforced on the installed Crossplane version.
                   required:
                     - type
                     - metric
@@ -127,61 +125,15 @@ spec:
                         Latency threshold in seconds, as a string, e.g. "0.3".
                         Must exactly match one of the target histogram's
                         configured `le` bucket boundaries as Prometheus renders
-                        it - a mismatch produces a recording rule matching zero
-                        series (empty result, not zero/NaN), which then never
-                        alerts and never errors. Can't be validated at the XRD
-                        level since bucket boundaries are an external fact
-                        about the instrumented service. Required when
-                        type == latency.
+                        it - a mismatch produces a query matching zero series
+                        (empty result, not zero/NaN), which then never alerts
+                        and never errors. Can't be validated at the XRD level
+                        since bucket boundaries are an external fact about the
+                        instrumented service. Required when type == latency.
                       minLength: 1
                   x-kubernetes-validations:
                     - rule: "self.type != 'availability' || has(self.errorFilter)"
                       message: "errorFilter is required when indicator.type == availability"
                     - rule: "self.type != 'latency' || has(self.latencyThreshold)"
                       message: "latencyThreshold is required when indicator.type == latency"
-
-                alerting:
-                  type: object
-                  default: {}
-                  properties:
-                    burnRates:
-                      type: array
-                      description: >-
-                        Multi-window multi-burn-rate alert tiers (Google SRE
-                        workbook pattern): an alert fires only when BOTH
-                        shortWindow's and longWindow's recording-rule error
-                        ratio exceed factor * (1 - objective/100)
-                        simultaneously. Defaults are the workbook's canonical
-                        2%-budget/1h and 5%-budget/6h tiers for a 30d window.
-                      minItems: 1
-                      default:
-                        - severity: critical
-                          shortWindow: "5m"
-                          longWindow: "1h"
-                          factor: 14.4
-                        - severity: warning
-                          shortWindow: "30m"
-                          longWindow: "6h"
-                          factor: 6
-                      items:
-                        type: object
-                        required:
-                          - severity
-                          - shortWindow
-                          - longWindow
-                          - factor
-                        properties:
-                          severity:
-                            type: string
-                            enum: [critical, warning, info]
-                          shortWindow:
-                            type: string
-                            pattern: '^([0-9]+(ms|s|m|h|d|w|y))+$'
-                          longWindow:
-                            type: string
-                            pattern: '^([0-9]+(ms|s|m|h|d|w|y))+$'
-                          factor:
-                            type: number
-                            minimum: 0
-                            exclusiveMinimum: true
           required: ["spec"]

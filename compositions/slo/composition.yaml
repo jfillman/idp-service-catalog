@@ -9,17 +9,31 @@
 # doesn't have. Pointing a second Composition's dirPath at that same mount
 # would render those 4 templates against every SLO XR too.
 #
-# Delimiters: << >> instead of ai-rollout's [[ ]]. Two reasons, not one:
+# Renders a Sloth (sloth.dev) `PrometheusServiceLevel` + a Grafana dashboard
+# ConfigMap - NOT a PrometheusRule directly. Sloth's own controller
+# (gitops-cluster-dev/10-crds-operators/sloth/) does the spec->PrometheusRule
+# translation. See service-catalog-design.md Item 4's revision history: this
+# Composition originally hand-rolled the multi-window-multi-burn-rate PromQL
+# itself (matching a kube-slo-style article the user found), then switched to
+# wrapping Sloth - the hand-rolled version worked and was live-verified, but
+# Sloth gives the full canonical 4-window pattern for free instead of a
+# simplified 2-tier one, and matches this project's "wrap, don't reinvent"
+# convention used everywhere else (Argo Rollouts, ESO, component charts).
+#
+# Delimiters: << >> instead of ai-rollout's [[ ]] or Go's default {{ }}. Two
+# reasons, not one - and BOTH still apply even though this Composition no
+# longer emits raw PromQL/PrometheusRule YAML itself:
 #   1. PromQL range-vector syntax needs literal `[5m]` right next to templated
 #      output - `[[ $w ]]` next to a literal `[` creates a 3-bracket run
 #      ([[[) that Go's template lexer misparses.
-#   2. Prometheus's OWN alert-annotation templating ({{ $value }},
-#      {{ $labels.x }}) must reach the rendered PrometheusRule completely
-#      literally, for Alertmanager to evaluate at firing time - not for this
-#      templating pass to consume. `{{ }}` is exactly Go's default delimiter,
-#      so it has to be something else; `<< >>` also happens to dodge
-#      Grafana dashboard JSON's legacy `[[var]]` substitution syntax, which
-#      `[[ ]]` would not.
+#   2. Sloth's OWN templating syntax (`{{.window}}`, required literally inside
+#      every errorQuery/totalQuery - see prometheusservicelevel.yaml) must
+#      reach the rendered PrometheusServiceLevel completely untouched, for
+#      Sloth's controller to substitute per-window at generation time - not
+#      for this templating pass to consume. `{{ }}` is exactly Go's default
+#      delimiter, so it has to be something else; `<< >>` also happens to
+#      dodge Grafana dashboard JSON's legacy `[[var]]` substitution syntax,
+#      which `[[ ]]` would not.
 #
 # Live-verified quirk (kind-dev, 2026-08-13): `kubectl get functions.pkg.
 # crossplane.io function-go-templating-slo` shows Healthy: False - "cannot
@@ -28,10 +42,9 @@
 # graph objects to two Function objects pointing at the identical package
 # reference as the existing `function-go-templating`. Confirmed functionally
 # harmless: the runtime pod comes up and the pipeline step executes correctly
-# regardless (proven end-to-end - a real SLO XR composed a working
-# PrometheusRule + dashboard ConfigMap, and Prometheus loaded and evaluated
-# the rules against real data). Cosmetic package-manager bookkeeping only, not
-# a functional blocker - not otherwise fixed/worked around this pass.
+# regardless (proven end-to-end, both on the original hand-rolled version and
+# again on this Sloth-wrapping version). Cosmetic package-manager bookkeeping
+# only, not a functional blocker - not otherwise fixed/worked around this pass.
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:

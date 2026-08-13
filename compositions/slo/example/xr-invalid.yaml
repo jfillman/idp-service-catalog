@@ -8,7 +8,6 @@ spec:
     name: checkout-kind-dev-prod
   service: checkout-api
   objective: 99.9
-  window: 30d
   indicator:
     type: availability
     metric: http_requests_total

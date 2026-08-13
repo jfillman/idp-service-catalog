@@ -8,19 +8,8 @@ spec:
     name: checkout-kind-dev-prod
   service: checkout-api
   objective: 99.9
-  window: 30d
   indicator:
     type: availability
     metric: http_requests_total
     totalFilter: 'service="checkout-api"'
     errorFilter: 'code=~"5.."'
-  alerting:
-    burnRates:
-      - severity: critical
-        shortWindow: 5m
-        longWindow: 1h
-        factor: 14.4
-      - severity: warning
-        shortWindow: 30m
-        longWindow: 6h
-        factor: 6

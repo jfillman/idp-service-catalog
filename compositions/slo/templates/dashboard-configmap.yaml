@@ -3,7 +3,11 @@
 # stack's Grafana sidecar config (label=grafana_dashboard, labelValue="1",
 # searchNamespace=ALL - verified live), so this ConfigMap is auto-discovered
 # regardless of which namespace the owning SLO XR (and therefore this
-# ConfigMap) lands in.
+# ConfigMap) lands in. Sloth itself doesn't generate dashboards in its
+# Kubernetes-controller/operator mode (confirmed against its Helm chart's
+# deployment args - only `kubernetes-controller`, no dashboard-related flag;
+# dashboard generation is a separate CLI-only feature) - this ConfigMap is
+# still ours to render.
 #
 # NOTE: never write two literal `<` or `>` characters adjacent to each other
 # anywhere in this file outside a real action, including in comments - the
@@ -18,21 +22,28 @@
 # block-scalar indentation risk entirely, since none of the substitutions
 # introduce their own newlines.
 #
-# Known follow-up once Grafana is live: confirm the Prometheus datasource `uid`
-# kube-prometheus-stack's bundled Grafana actually provisions - assumed
-# "prometheus" (the chart's own default), not yet confirmed against a running
-# instance.
+# Metric names/labels below are Sloth's own (confirmed live against a real
+# generated PrometheusRule, not guessed from docs - Sloth's docs site didn't
+# actually document these): `sloth_slo`/`sloth_service` identify the series
+# (deliberately NOT `sloth_id`, which is derived from the
+# PrometheusServiceLevel object's own name - prometheusservicelevel.yaml
+# names that object `<xrName>-slo`, an implementation detail this dashboard
+# shouldn't need to know about). `slo:sli_error:ratio_rate5m` is the 5m SLI
+# error ratio; `slo:objective:ratio` and `slo:period_error_budget_remaining:
+# ratio` are Sloth's own metadata recording rules - the budget-remaining one
+# in particular replaces a hand-rolled formula the previous (pre-Sloth)
+# version of this template computed itself.
+#
+# Datasource `uid: "prometheus"` confirmed live against a real Grafana
+# instance (kube-prometheus-stack's bundled default datasource).
 <<- $spec := .observed.composite.resource.spec >>
 <<- $xrName := .observed.composite.resource.metadata.name >>
 <<- $service := $spec.service >>
-<<- $objective := $spec.objective >>
-<<- $complianceWindow := $spec.window >>
-<<- $sliExpr := printf "(1 - slo:sli_error_ratio5m{slo=%q,service=%q}) * 100" $xrName $service >>
-<<- $objectiveExpr := printf "vector(%v)" $objective >>
-<<- $budgetExpr := printf "(1 - (slo:sli_error_ratio%s{slo=%q,service=%q} / (1 - %v/100))) * 100" $complianceWindow $xrName $service $objective >>
+<<- $sliExpr := printf "(1 - slo:sli_error:ratio_rate5m{sloth_slo=%q,sloth_service=%q}) * 100" $xrName $service >>
+<<- $objectiveExpr := printf "slo:objective:ratio{sloth_slo=%q,sloth_service=%q} * 100" $xrName $service >>
+<<- $budgetExpr := printf "slo:period_error_budget_remaining:ratio{sloth_slo=%q,sloth_service=%q} * 100" $xrName $service >>
 <<- $title := printf "SLO: %s (%s)" $service $xrName >>
 <<- $uid := printf "slo-%s" $xrName >>
-<<- $budgetTitle := printf "Error budget remaining (%s)" $complianceWindow >>
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -81,7 +92,7 @@ data:
         {
           "id": 2,
           "type": "gauge",
-          "title": <<$budgetTitle | toJson>>,
+          "title": "Error budget remaining",
           "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "fieldConfig": {
