@@ -96,6 +96,17 @@ comments):
   Composition stamp `metadata.labels` on the `PrometheusServiceLevel` it
   generates; Sloth propagates that onto the `PrometheusRule` it creates.
 
+**GitOps wiring — done, live-verified 2026-08-13.**
+`gitops-cluster-dev/20-service-catalog/idp-service-catalog/application.yaml`
+pins this repo to git tag `v0.1.0` via a directory-source Application (same
+pattern already proven for `10-crds-operators`/`40-observability`), syncing
+`xrds/*.yaml` + `compositions/*/composition.yaml` only. `charts/idp-application`
+stays un-synced here — it's rendered per app-release into `gitops-<app-name>`
+repos, not installed cluster-wide — and `functions/`'s packages stay
+registered by pinned OCI tag in `10-crds-operators/crossplane/functions.yaml`,
+not synced as source directories. Replaces the manual `kubectl apply`
+verification path used until now.
+
 **Not started yet**: the rest of the v1 XRD catalog (`NodeJSApplication`,
 `SpringBootApplication`, `ApplicationEnvironment`, and the Component XRDs —
 Redis, `OAuthServer`, ...) and their Compositions — `idp-application` is what
@@ -104,11 +115,7 @@ for those. Also not built: the `ClusterAnalysisTemplate` golden-path library
 and `argocd-cm` `Rollout` health-check config (§3 says these belong in
 `idp-cluster-baseline`), and a real platform default canary step sequence (§3
 "Still open" item 3 — the chart ships a deliberately inert placeholder in the
-meantime, see its README). Also explicitly out of scope so far: wiring
-`gitops-cluster-dev/20-service-catalog` (still an empty placeholder) or
-pinning this repo into the app-of-apps — today's live-verification is direct/
-manual `kubectl apply`, same as how `function-rollout-watcher` was proven out
-before real GitOps adoption. The rest of `idp-application`'s own coverage
+meantime, see its README). The rest of `idp-application`'s own coverage
 (Rollout/Service/etc.) remains fixture-only, not live-verified against a real
 `ApplicationEnvironment` XR yet.
 
