@@ -14,12 +14,11 @@ CronJob, ServiceMonitor, `extraManifests:`) went beyond §3 entirely; a third
 rules) folded back into §3's schema, since both are genuine additions to
 fields §3 already specifies rather than new resource kinds - each pass called
 out separately below. Real Helm chart, not pseudocode - `helm lint`/`helm
-template` verified against six fixtures (minimal, full-featured incl.
-blueGreen/CronJob/Job/ServiceMonitor/extraManifests, a dedicated configMaps/
-secrets consumption-mode fixture, a dedicated NetworkPolicy fixture, an
-`appType: infra` standalone-component release with no workload, and that same
-infra release with a CronJob that supplies its own image) before any pass was
-called done.
+template` verified against six fixtures before any of the first four passes was
+called done, **and, as of a fifth pass, live-verified end-to-end on a real
+cluster** (a real migration of a real running app off a different mechanism
+entirely) - see "Live-verified on a real cluster" below for what that actually
+covered and the two real bugs it found.
 
 ## What §3 left to this implementation, and what was decided
 
@@ -242,7 +241,51 @@ networkPolicy:
   `success-rate-check`) and the `argocd-cm` `Rollout` health-check
   configuration §3 says belongs in `idp-cluster-baseline`, not here.
 - A real platform default canary step sequence (see above).
-- Live verification on a real cluster - this has only been `helm
-  lint`/`helm template` tested against fixture values so far, not installed
-  against a real `ApplicationEnvironment` XR or a real Argo Rollouts
-  controller.
+
+## Live-verified on a real cluster (2026-08-13, fifth pass)
+
+No longer fixture-only. `kind-dev` was wiped and rebuilt from scratch under real
+GitOps management (`gitops-cluster-dev`, including a real Argo Rollouts controller,
+Calico for actual NetworkPolicy enforcement, and the full observability stack), then
+`widget-api` - previously deployed via the standalone `ai-rollout` prototype's own
+Crossplane Composition, not this chart - was migrated onto `idp-application` for
+real (`helm install`/`helm upgrade`, no XRD/Composition in front of it yet - that
+part's still not built). Full test pass, each checked against real cluster state,
+not just successful apply:
+
+- **NetworkPolicy actually enforced**: same-namespace traffic succeeded,
+  cross-namespace traffic timed out (Calico, not kindnet - kind's default CNI
+  silently ignores NetworkPolicy objects entirely, confirmed as the reason for
+  the cluster rebuild).
+- **ServiceMonitor actually scraped** by a real Prometheus - discovered via an
+  *empty* `serviceMonitorSelector` on this specific kube-prometheus-stack install
+  (`serviceMonitorSelectorNilUsesHelmValues: false`, set so the OTel Collector's
+  own unlabeled ServiceMonitor gets discovered too), not the release-label
+  mechanism this chart's `serviceMonitor.additionalLabels` was built assuming -
+  both are real, see the field's own comment in `values.yaml` for which case
+  needs which.
+- **Real canary rollout + Prometheus-backed AnalysisRun**, on an actual image
+  update - found and fixed a real bug along the way (below).
+- **checksum/configmaps actually triggers a new Rollout revision** on a
+  config-only edit (no image/spec change) - confirmed a new ReplicaSet rolled
+  out and the new value landed in the running pods, not just that the annotation
+  changed.
+
+**Two real bugs found and fixed during this pass**:
+
+1. **`rollout.canaryAnalysis` didn't exist at all** - `strategy.canary.analysis`
+   (continuous background analysis against an AnalysisTemplate, run alongside
+   every step) is a sibling field to `steps`, not nested inside it, and had no
+   escape hatch. Added as raw passthrough, same idiom as `steps` itself.
+2. **`analysisTemplates:` entries silently dropped `args:`** - the template only
+   ever rendered `spec.metrics`. Argo Rollouts requires an argument to be
+   declared in the AnalysisTemplate's *own* `spec.args` before a metric query
+   can reference `{{args.<name>}}` - supplying the value via the Rollout's
+   `canary.analysis.args` alone isn't enough. Without this, the AnalysisRun
+   errors `Unable to resolve metric arguments` even though the Rollout's own
+   spec looks completely correct - confirmed against Argo Rollouts' own docs,
+   not guessed, after the live AnalysisRun actually failed with that exact
+   message.
+
+Also resolved, not placeholders anymore: `networkPolicy.ingressControllerNamespaceSelector`
+is `projectcontour` (Contour, confirmed live - not the `ingress-nginx` guess).
