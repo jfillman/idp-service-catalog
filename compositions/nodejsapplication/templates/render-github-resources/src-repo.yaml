@@ -1,0 +1,196 @@
+# Src repo + Node.js boilerplate. Rendered by function-go-templating (source: Inline,
+# see ../composition.yaml/../build-composition.sh), using double-angle-bracket
+# delimiters (see composition.yaml) - same convention as compositions/slo, for the same
+# reason (Go's default curly-brace delimiter would collide with literal template syntax
+# elsewhere in this catalog; here it's package.json's own JSON braces needing no
+# escaping at all, kept consistent anyway).
+#
+# NOTE: never write two literal angle-bracket delimiter characters adjacent to each
+# other anywhere in this file outside a real action, including in comments - the lexer
+# scans raw text for the delimiter pair regardless of YAML comment syntax, and an
+# accidental empty action fails the whole render (hit live building this template).
+#
+# repo.github.m.upbound.io (namespaced managed resources), not the Cluster-scoped
+# repo.github.upbound.io family - see provider-github-config.yaml's own header for why
+# (Crossplane v2 refuses to let a namespaced XR compose a Cluster-scoped resource at
+# all, a real error hit live). providerConfigRef.kind: ClusterProviderConfig is
+# required, not defaulted - confirmed via `kubectl explain`.
+#
+# Repository's own forProvider has no owner field - every repo this ProviderConfig's
+# credential can create lands under whichever owner that credential is scoped to (see
+# ../../../10-crds-operators/crossplane/provider-github-config.yaml). autoInit: true on
+# every Repository below - RepositoryFile requires the target branch to already exist,
+# which an empty repo doesn't have.
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $description := $spec.description | default (printf "%s - a Node.js application" $xrName) >>
+<<- $nodeVersion := $spec.nodeVersion >>
+<<- $packageManager := $spec.packageManager >>
+<<- $port := $spec.port >>
+<<- $visibility := $spec.visibility >>
+<<- $installCmd := "npm install" >>
+<<- $lockfile := "package-lock.json" >>
+<<- if eq $packageManager "pnpm" >>
+  <<- $installCmd = "pnpm install --frozen-lockfile" >>
+  <<- $lockfile = "pnpm-lock.yaml" >>
+<<- else if eq $packageManager "yarn" >>
+  <<- $installCmd = "yarn install --frozen-lockfile" >>
+  <<- $lockfile = "yarn.lock" >>
+<<- end >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: Repository
+metadata:
+  name: <<$xrName>>-src
+  annotations:
+    <<setResourceNameAnnotation "src-repo">>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    name: <<$xrName>>
+    description: <<$description | toJson>>
+    visibility: <<$visibility>>
+    autoInit: true
+    hasIssues: true
+    deleteBranchOnMerge: true
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-package-json
+  annotations:
+    <<setResourceNameAnnotation "src-repo-package-json">>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: package.json
+    overwriteOnCreate: true
+    content: |
+      {
+        "name": <<$xrName | toJson>>,
+        "version": "0.1.0",
+        "description": <<$description | toJson>>,
+        "main": "index.js",
+        "scripts": {
+          "start": "node index.js"
+        },
+        "engines": {
+          "node": <<printf ">=%s" $nodeVersion | toJson>>
+        }
+      }
+    commitMessage: "NodeJSApplication scaffold: package.json"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-index-js
+  annotations:
+    <<setResourceNameAnnotation "src-repo-index-js">>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: index.js
+    overwriteOnCreate: true
+    content: |
+      const http = require('http');
+
+      const port = process.env.PORT || <<$port>>;
+
+      const server = http.createServer((req, res) => {
+        if (req.url === '/healthz') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'ok' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(<<printf "Hello from %s\\n" $xrName | toJson>>);
+      });
+
+      server.listen(port, () => {
+        console.log(<<printf "%s listening on port ${port}" $xrName | toJson>>);
+      });
+    commitMessage: "NodeJSApplication scaffold: index.js"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-dockerfile
+  annotations:
+    <<setResourceNameAnnotation "src-repo-dockerfile">>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: Dockerfile
+    overwriteOnCreate: true
+    content: |
+      FROM node:<<$nodeVersion>>-alpine
+      WORKDIR /app
+      COPY package.json <<$lockfile>>* ./
+      RUN <<$installCmd>>
+      COPY . .
+      EXPOSE <<$port>>
+      CMD ["node", "index.js"]
+    commitMessage: "NodeJSApplication scaffold: Dockerfile"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-gitignore
+  annotations:
+    <<setResourceNameAnnotation "src-repo-gitignore">>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: .gitignore
+    overwriteOnCreate: true
+    content: |
+      node_modules/
+      .env
+      *.log
+    commitMessage: "NodeJSApplication scaffold: .gitignore"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-readme
+  annotations:
+    <<setResourceNameAnnotation "src-repo-readme">>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: README.md
+    overwriteOnCreate: true
+    content: |
+      # <<$xrName>>
+
+      <<$description>>
+
+      Scaffolded by `NodeJSApplication` (idp-service-catalog). Node <<$nodeVersion>>,
+      <<$packageManager>>.
+
+      ```
+      <<$installCmd>>
+      npm start
+      ```
+
+      **CICD pipeline onboarding is not wired up yet** - this app's `NodeJSApplication`
+      resource carries a `CicdOnboarded: False` condition until the platform's CI/CD
+      control plane is migrated onto this cluster. See the resource's own status for
+      details.
+    commitMessage: "NodeJSApplication scaffold: README.md"

@@ -1,0 +1,35 @@
+# Commits tenants/<app-name>/app.yaml into gitops-cluster-dev-tenants - read by that
+# repo's tenant-appprojects ApplicationSet (gitops-cluster-dev/02-argocd-apps/
+# tenant-appprojects/) to build this app's AppProject. Written here, not by
+# ApplicationEnvironment, per the same app-level/create-once reasoning
+# service-catalog-design.md Item 1/2 already uses for the gitops-<app-name> repo itself -
+# see gitops-cluster-dev-tenants/README.md, corrected to match.
+#
+# platformOwner/tenantsRepo are fixed platform constants, not XR spec fields - see
+# xrds/nodejsapplication.yaml's own header for why (owner is a ProviderConfig-wide
+# setting, not a per-repo one; this catalog only targets one cluster's tenants repo
+# today, kind-dev - a real multi-cluster targeting field would need to exist on
+# ApplicationEnvironment, not here, once this platform actually has more than one).
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $platformOwner := "jfillman" >>
+<<- $tenantsRepo := "gitops-cluster-dev-tenants" >>
+<<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $xrName >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-tenant-app-yaml
+  annotations:
+    <<setResourceNameAnnotation "tenant-app-yaml">>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$tenantsRepo>>
+    file: <<printf "tenants/%s/app.yaml" $xrName>>
+    overwriteOnCreate: true
+    content: |
+      appName: <<$xrName>>
+      gitopsRepoUrl: <<$gitopsRepoUrl>>
+      githubOwner: <<$platformOwner>>
+    commitMessage: <<printf "Onboard %s: add tenants/%s/app.yaml" $xrName $xrName | toJson>>

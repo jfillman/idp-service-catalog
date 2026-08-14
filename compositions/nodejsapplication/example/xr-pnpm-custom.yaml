@@ -1,0 +1,11 @@
+apiVersion: catalog.idp.io/v1alpha1
+kind: NodeJSApplication
+metadata:
+  name: checkout-api
+  namespace: demo-apps
+spec:
+  description: Checkout API for the demo storefront
+  nodeVersion: "22"
+  packageManager: pnpm
+  port: 3000
+  visibility: public

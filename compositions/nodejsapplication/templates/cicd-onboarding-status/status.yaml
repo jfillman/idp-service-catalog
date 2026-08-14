@@ -1,0 +1,28 @@
+# Surfaces the CICD-onboarding gap as a custom condition, not an override of the
+# standard Ready condition - see xrds/nodejsapplication.yaml's own header and
+# idp/docs/service-catalog-design.md Item 1/2's "real known gap" note for what this is
+# and why. Ready itself stays real (whatever detect-ready, the pipeline step before this
+# one, computes from the actual provider-github managed resources): function-go-
+# templating's own docs (github.com/crossplane-contrib/function-go-templating,
+# "Setting Conditions on the Claim and Composite") explicitly reserve
+# Ready/Healthy/Synced and error if a Composition tries to set them directly via its
+# ClaimConditions mechanism - confirmed live, not guessed, after an earlier attempt at
+# patching status.conditions directly (matching the XR's own apiVersion/kind, no
+# composition-resource-name annotation - a real, but different, documented mechanism for
+# a different purpose) rendered with zero effect via crossplane render.
+#
+# Once the platform-cicd-on-kind-dev migration lands (a separate task - see the doc note
+# above), this whole step is what gets removed to stop reporting the condition at all.
+<<- $xrName := .observed.composite.resource.metadata.name >>
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ClaimConditions
+conditions:
+  - type: CicdOnboarded
+    status: "False"
+    reason: CicdOnboardingPending
+    message: >-
+      <<$xrName>>'s src/gitops repos and tenant identity are provisioned, but CICD
+      pipeline onboarding is not - platform-cicd's control plane isn't running on this
+      cluster yet (separate migration task). This condition clears once that migration
+      lands and onboards this app's app-<<$xrName>>-cicd namespace for real.
+    target: CompositeAndClaim

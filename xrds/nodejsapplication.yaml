@@ -1,0 +1,83 @@
+# First Bootstrap-tier XRD in the catalog - idp/docs/service-catalog-design.md Item 1/2
+# and the Framework tier table. apiextensions.crossplane.io/v2 (not v1) for real
+# namespaced-XR support, same as slos.catalog.idp.io.
+#
+# XR's own metadata.name IS the app name (no separate spec.appName) - matches SLO's own
+# $xrName convention and Backstage's eventual "New Service" form taking one name field.
+#
+# Deliberately narrow, per the design doc: src repo + boilerplate + an empty, scaffolded
+# gitops-<app-name> repo + a tenants/<app-name>/app.yaml commit. NOT upper-env
+# provisioning (ApplicationEnvironment, a separate future XRD) and NOT a real CICD
+# pipeline (platform-cicd's control plane isn't running on kind-dev yet - a separate,
+# already-scoped migration task, not this one). The Composition reports that gap as a
+# real Ready: False condition rather than silently skipping it or pretending it
+# succeeded - see compositions/nodejsapplication/templates/cicd-onboarding-status.yaml.
+#
+# No spec.githubOwner: confirmed live against provider-github's own credential-parsing
+# source that `owner` is a ProviderConfig-wide setting (required alongside app_auth),
+# not a per-Repository field - the Repository managed resource has no owner field of its
+# own. A spec field here would imply per-app control that doesn't actually change where
+# the repo lands, so the Composition writes the platform's real, fixed owner
+# (provider-github-config.yaml's own credential) into tenants/<app-name>/app.yaml
+# instead of taking it as input.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: nodejsapplications.catalog.idp.io
+spec:
+  group: catalog.idp.io
+  names:
+    kind: NodeJSApplication
+    plural: nodejsapplications
+    singular: nodejsapplication
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                description:
+                  type: string
+                  description: >-
+                    Free-text description - used as the src repo's GitHub description
+                    and in the generated boilerplate README. Optional; omitted sections
+                    render a generic placeholder instead.
+                  minLength: 1
+                nodeVersion:
+                  type: string
+                  description: >-
+                    Node.js major version - drives the Dockerfile's FROM line and the
+                    boilerplate package.json's engines field. One of this platform's
+                    currently-supported LTS lines, not a free-form string, so a typo
+                    fails XR admission instead of producing a Dockerfile that pulls a
+                    nonexistent image tag.
+                  enum: ["18", "20", "22"]
+                  default: "20"
+                packageManager:
+                  type: string
+                  description: >-
+                    Which package manager's lockfile/install instructions the
+                    boilerplate README and Dockerfile reference.
+                  enum: [npm, pnpm, yarn]
+                  default: npm
+                port:
+                  type: integer
+                  description: >-
+                    Port the boilerplate HTTP server listens on (also exposed as
+                    package.json's start script and Dockerfile's EXPOSE). Matches
+                    idp-application's own rollout.ports default convention.
+                  minimum: 1
+                  maximum: 65535
+                  default: 8080
+                visibility:
+                  type: string
+                  description: GitHub visibility for both the src and gitops repos.
+                  enum: [private, public]
+                  default: private
+          required: ["spec"]
