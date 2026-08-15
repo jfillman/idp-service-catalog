@@ -1,0 +1,176 @@
+# GENERATED FILE - do not hand-edit the pipeline's `input.inline.template` blocks
+# below. Edit templates/render-github-resources/*.yaml or
+# templates/workload-status/*.yaml instead, then run ./build-composition.sh to
+# regenerate this file.
+#
+# Two function-go-templating steps, not one (compositions/nodejsapplication's own
+# pattern, copied directly): render-github-resources composes the real
+# provider-github managed resources (RepositoryFile - see
+# idp/docs/service-catalog-design.md Item 3), workload-status patches the XR's own
+# status afterward with a WorkloadDeployed: False custom condition (see that
+# template's own header for the mechanism and why). Both share the ONE
+# already-installed function-go-templating Function via source: Inline - registering
+# a second Function package pointing at the same reference corrupted Crossplane's
+# shared dependency-lock graph cluster-wide, a real bug hit live building the SLO
+# Composition (see compositions/slo/build-composition.sh's own header) - never
+# repeat that here.
+#
+# Delimiters: << >> instead of Go's default {{ }}, matching every other Composition
+# in this catalog - kept consistent even though this one has no PromQL/Sloth
+# templating syntax of its own to dodge; `<<setResourceNameAnnotation ...>>` calls
+# below are function-go-templating's own helper, unaffected by the delimiter choice.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: applicationenvironments.catalog.idp.io
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.idp.io/v1alpha1
+    kind: ApplicationEnvironment
+  mode: Pipeline
+  pipeline:
+    - step: render-github-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            # Commits tenants/<appName>/<env>/identity.yaml into gitops-cluster-dev-tenants -
+            # read by that repo's tenant-onboarding ApplicationSet (git generator over
+            # tenants/*/*/identity.yaml) to render the real deployment Application via
+            # idp-application. Matches gitops-cluster-dev-tenants/README.md's own documented
+            # identity.yaml shape exactly (appName/gitopsRepoUrl/githubOwner/env) - deliberately
+            # duplicating app.yaml's gitopsRepoUrl/githubOwner rather than requiring the
+            # ApplicationSet to join two files (same reasoning that README already gives). No
+            # appRepoUrl here - that field only lives on app.yaml (NodeJSApplication's own
+            # commit), no consumer at the per-env level.
+            #
+            # platformOwner/tenantsRepo are fixed platform constants, not spec fields - same
+            # reasoning xrds/nodejsapplication.yaml's own header already uses (owner is a
+            # ProviderConfig-wide setting; this catalog only targets one cluster's tenants repo
+            # today).
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $appName := $spec.appName >>
+            <<- $env := $spec.env >>
+            <<- $platformOwner := "jfillman" >>
+            <<- $tenantsRepo := "gitops-cluster-dev-tenants" >>
+            <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $appName >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-tenant-identity-yaml
+              annotations:
+                <<setResourceNameAnnotation "tenant-identity-yaml">>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$tenantsRepo>>
+                file: <<printf "tenants/%s/%s/identity.yaml" $appName $env>>
+                overwriteOnCreate: true
+                content: |
+                  appName: <<$appName>>
+                  gitopsRepoUrl: <<$gitopsRepoUrl>>
+                  githubOwner: <<$platformOwner>>
+                  env: <<$env>>
+                commitMessage: <<printf "Onboard %s %s: add tenants/%s/%s/identity.yaml" $appName $env $appName $env | toJson>>
+            ---
+            # Commits <cluster>/<env>/values.yaml into the app's own gitops-<appName> repo
+            # (already created, empty, by NodeJSApplication - see that XRD's own header). Read by
+            # gitops-cluster-dev/02-argocd-apps/tenant-onboarding/applicationset.yaml's second
+            # source ($ref'd valueFiles: - $appsrc/kind-dev/{{.env}}/values.yaml).
+            #
+            # cluster hardcoded to the literal "kind-dev" here, not read from spec - confirmed
+            # live that ApplicationSet already hardcodes the same literal in two places
+            # (valuesObject.cluster and this exact path), no real multi-cluster wiring exists
+            # downstream yet. See xrds/applicationenvironment.yaml's own header for why this
+            # isn't a spec field.
+            #
+            # rollout: null (not a placeholder image) - there's no real image to deploy yet, this
+            # platform's CICD control plane isn't running on kind-dev (same gap
+            # NodeJSApplication already reports via CicdOnboarded). idp-application's chart
+            # already fixture-tests rollout: null cleanly (no Rollout/Service/HPA/PDB rendered,
+            # just NetworkPolicy/ServiceAccount) - see charts/idp-application/README.md's "Live-
+            # verified" section. The workload-status step below surfaces this gap as a real
+            # condition instead of leaving it silently looking finished.
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $appName := $spec.appName >>
+            <<- $env := $spec.env >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-values-yaml
+              annotations:
+                <<setResourceNameAnnotation "values-yaml">>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<printf "gitops-%s" $appName>>
+                file: <<printf "kind-dev/%s/values.yaml" $env>>
+                overwriteOnCreate: true
+                content: |
+                  appName: <<$appName>>
+                  appType: app
+                  cluster: kind-dev
+                  envName: <<$env>>
+                  rollout: null
+                commitMessage: <<printf "Bootstrap %s environment: add kind-dev/%s/values.yaml" $env $env | toJson>>
+            ---
+        delims:
+          left: "<<"
+          right: ">>"
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready
+    - step: workload-status
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            # Surfaces the "no real image yet" gap as a custom condition, not an override of the
+            # standard Ready condition - direct copy of NodeJSApplication's own
+            # cicd-onboarding-status mechanism (compositions/nodejsapplication/templates/
+            # cicd-onboarding-status/status.yaml), same reasoning: function-go-templating
+            # reserves Ready/Healthy/Synced and errors if a Composition tries to set them
+            # directly via ClaimConditions - confirmed live during that build, not guessed.
+            # Ready itself stays real (whatever detect-ready, the pipeline step before this one,
+            # computes from the actual provider-github managed resources).
+            #
+            # Known, accepted limitation: once a developer manually edits values.yaml in git to
+            # add a real rollout.image, this condition does NOT auto-clear - RepositoryFile's
+            # overwriteOnCreate: true never re-reads the file's live content back into this XR's
+            # observed state, so there's no mechanism to recompute it after creation. Same shape
+            # as NodeJSApplication's CicdOnboarded condition, which also only clears when a
+            # future Composition version removes this step entirely.
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $env := $spec.env >>
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ClaimConditions
+            conditions:
+              - type: WorkloadDeployed
+                status: "False"
+                reason: NoImageYet
+                message: >-
+                  <<$xrName>>'s <<$env>> values.yaml and tenant identity are provisioned, but
+                  rollout is null - there's no real container image to deploy yet
+                  (platform-cicd-on-kind-dev migration hasn't landed, and no developer PR has
+                  set rollout.image). This condition does not auto-clear once one does; it
+                  reflects the state at bootstrap time only.
+                target: CompositeAndClaim
+            ---
+        delims:
+          left: "<<"
+          right: ">>"

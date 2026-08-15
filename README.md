@@ -41,6 +41,48 @@ The ingress-controller namespace selector is resolved too now (Contour,
 confirmed live) - remaining open items: attached-resource API group, who
 provisions the image-pull Secret.
 
+**`NodeJSApplication` XRD + Composition — first Bootstrap-tier XRD, built and
+live-verified on `kind-dev` 2026-08-13/14.** Item 1/2's design: given an app name,
+pure `provider-github` commits a src repo + Node.js boilerplate (Dockerfile,
+`package.json`, `index.js`, README — `npm`/`pnpm`/`yarn` all covered), an empty,
+scaffolded `gitops-<appName>` repo (its real `<cluster>/<env>/values.yaml` layout
+gets populated once `ApplicationEnvironment` exists, immediately below), and a
+`tenants/<appName>/app.yaml` entry in `gitops-cluster-dev-tenants` (read by that
+repo's `tenant-appprojects` ApplicationSet to build the app's `AppProject`).
+Deliberately narrow — no upper-env provisioning, no real CICD pipeline (this
+platform's control plane isn't running on `kind-dev` yet, a separate migration
+task) — the Composition reports that gap as a real `CicdOnboarded: False` custom
+condition rather than silently skipping it. Three real, load-bearing corrections
+found only by building this for real: GitHub Apps can't create repos under a
+personal (non-Org) account at all — a classic PAT (`repo`+`delete_repo` scopes)
+replaces the originally-planned GitHub App reuse; Crossplane v2 rejects a
+namespaced XR composing a Cluster-scoped managed resource, so `provider-github`'s
+namespaced `repo.github.m.upbound.io` family is required, not its Cluster-scoped
+sibling; `function-go-templating` reserves `Ready`/`Healthy`/`Synced` and errors if
+a Composition patches them directly — the custom-condition mechanism above is the
+only supported way to express "succeeded except X."
+
+**`ApplicationEnvironment` XRD + Composition — second Bootstrap-tier XRD, built
+2026-08-15.** Item 3's design: given an already-onboarded app (`NodeJSApplication`)
+and an `env` (`dev`/`staging`/`prod`, enum-constrained), pure `provider-github`
+commits two files, no live cluster credential — `kind-dev/<env>/values.yaml` into
+the app's own `gitops-<appName>` repo, and `tenants/<appName>/<env>/identity.yaml`
+into `gitops-cluster-dev-tenants` (read by that repo's `tenant-onboarding`
+ApplicationSet to render the real deployment `Application`). `cluster` is a fixed
+Composition constant (`kind-dev`), not a spec field — confirmed live that the
+already-built `tenant-onboarding` ApplicationSet hardcodes the same literal in two
+places, no real multi-cluster wiring exists downstream yet. The initial
+`values.yaml` is an identity-only stub (`rollout: null`) since this platform's CICD
+control plane isn't running on `kind-dev` yet — same scope boundary
+`NodeJSApplication` already drew for its own CICD-onboarding gap, surfaced here as a
+sibling `WorkloadDeployed: False` custom condition (direct copy of
+`NodeJSApplication`'s `CicdOnboarded` mechanism). Confirmed the exact
+`environmentRef.name` shape (`<appName>-<cluster>-<envName>`) this XRD's naming
+convention must satisfy by reading `SLO`'s own XRD/chart helper directly before
+building — `SLO`'s Composition doesn't actually do a live existence-check lookup
+today (the design doc's "extra resources lookup" mechanism is aspirational, not
+built anywhere in this repo).
+
 **`SLO` XRD + Composition — first XRD in the catalog, live-verified on
 `kind-dev`.** Item 4's design (`idp/docs/service-catalog-design.md`), wraps
 Sloth (sloth.dev) rather than hand-rolling multi-window-multi-burn-rate
@@ -107,17 +149,17 @@ registered by pinned OCI tag in `10-crds-operators/crossplane/functions.yaml`,
 not synced as source directories. Replaces the manual `kubectl apply`
 verification path used until now.
 
-**Not started yet**: the rest of the v1 XRD catalog (`NodeJSApplication`,
-`SpringBootApplication`, `ApplicationEnvironment`, and the Component XRDs —
-Redis, `OAuthServer`, ...) and their Compositions — `idp-application` is what
-a Composition will render into `gitops-<app-name>`, but nothing calls it yet
-for those. Also not built: the `ClusterAnalysisTemplate` golden-path library
-and `argocd-cm` `Rollout` health-check config (§3 says these belong in
-`idp-cluster-baseline`), and a real platform default canary step sequence (§3
-"Still open" item 3 — the chart ships a deliberately inert placeholder in the
-meantime, see its README). The rest of `idp-application`'s own coverage
-(Rollout/Service/etc.) remains fixture-only, not live-verified against a real
-`ApplicationEnvironment` XR yet.
+**Not started yet**: the rest of the v1 XRD catalog (`SpringBootApplication` and the
+Component XRDs — Redis, `OAuthServer`, ...) and their Compositions. Also not built:
+the `ClusterAnalysisTemplate` golden-path library and `argocd-cm` `Rollout`
+health-check config (§3 says these belong in `idp-cluster-baseline`), and a real
+platform default canary step sequence (§3 "Still open" item 3 — the chart ships a
+deliberately inert placeholder in the meantime, see its README). The rest of
+`idp-application`'s own coverage (Rollout/Service/etc.) remains fixture-only, not
+live-verified against a real `ApplicationEnvironment`-provisioned env with a real
+`rollout.image` set yet — the live-verification pass above used a direct `helm
+install`, not a real `ApplicationEnvironment` XR (that XRD didn't exist yet at the
+time).
 
 ## Layout (so far)
 
@@ -128,7 +170,11 @@ functions/
 charts/
   idp-application/             §3's Embedded+Attached tier chart - one release per (app, cluster, env)
 xrds/
-  slo.yaml                     SLO XRD (catalog.idp.io/v1alpha1)
+  nodejsapplication.yaml        NodeJSApplication XRD (catalog.idp.io/v1alpha1)
+  applicationenvironment.yaml   ApplicationEnvironment XRD (catalog.idp.io/v1alpha1)
+  slo.yaml                      SLO XRD (catalog.idp.io/v1alpha1)
 compositions/
-  slo/                         SLO Composition (source: Inline) + templates + build-composition.sh
+  nodejsapplication/            NodeJSApplication Composition (source: Inline) + templates + build-composition.sh
+  applicationenvironment/       ApplicationEnvironment Composition (source: Inline) + templates + build-composition.sh
+  slo/                          SLO Composition (source: Inline) + templates + build-composition.sh
 ```

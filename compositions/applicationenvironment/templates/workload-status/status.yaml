@@ -1,0 +1,31 @@
+# Surfaces the "no real image yet" gap as a custom condition, not an override of the
+# standard Ready condition - direct copy of NodeJSApplication's own
+# cicd-onboarding-status mechanism (compositions/nodejsapplication/templates/
+# cicd-onboarding-status/status.yaml), same reasoning: function-go-templating
+# reserves Ready/Healthy/Synced and errors if a Composition tries to set them
+# directly via ClaimConditions - confirmed live during that build, not guessed.
+# Ready itself stays real (whatever detect-ready, the pipeline step before this one,
+# computes from the actual provider-github managed resources).
+#
+# Known, accepted limitation: once a developer manually edits values.yaml in git to
+# add a real rollout.image, this condition does NOT auto-clear - RepositoryFile's
+# overwriteOnCreate: true never re-reads the file's live content back into this XR's
+# observed state, so there's no mechanism to recompute it after creation. Same shape
+# as NodeJSApplication's CicdOnboarded condition, which also only clears when a
+# future Composition version removes this step entirely.
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $env := $spec.env >>
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ClaimConditions
+conditions:
+  - type: WorkloadDeployed
+    status: "False"
+    reason: NoImageYet
+    message: >-
+      <<$xrName>>'s <<$env>> values.yaml and tenant identity are provisioned, but
+      rollout is null - there's no real container image to deploy yet
+      (platform-cicd-on-kind-dev migration hasn't landed, and no developer PR has
+      set rollout.image). This condition does not auto-clear once one does; it
+      reflects the state at bootstrap time only.
+    target: CompositeAndClaim

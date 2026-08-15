@@ -1,0 +1,16 @@
+# crossplane render doesn't run the XRD's own OpenAPI schema defaulting/enum
+# admission (real apiserver behavior, not replicated by the offline render tool) -
+# this fixture can't prove the env enum actually rejects a typo, only that the happy
+# path renders correctly. See ../xrds/applicationenvironment.yaml for the schema.
+#
+# metadata.name follows the documented (not enforced) <appName>-kind-dev-<env>
+# convention - the same deterministic string idp-application's own environmentRef
+# helper independently computes for any Attached-tier XR in this env.
+apiVersion: catalog.idp.io/v1alpha1
+kind: ApplicationEnvironment
+metadata:
+  name: widget-service-kind-dev-dev
+  namespace: demo-apps
+spec:
+  appName: widget-service
+  env: dev

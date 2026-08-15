@@ -1,0 +1,83 @@
+# Second Bootstrap-tier XRD - idp/docs/service-catalog-design.md Item 3. Given an app
+# (already onboarded via NodeJSApplication) and an env name, commits that env's
+# <cluster>/<env>/values.yaml into the app's own gitops-<appName> repo and a
+# tenants/<appName>/<env>/identity.yaml entry into gitops-cluster-dev-tenants - read by
+# that repo's tenant-onboarding ApplicationSet to render the real deployment
+# Application via idp-application (idp-service-catalog's shared chart). Pure
+# provider-github, no live cluster credential - same mechanism as NodeJSApplication.
+#
+# apiextensions.crossplane.io/v2 (not v1) for real namespaced-XR support, same as
+# NodeJSApplication/SLO.
+#
+# No spec.cluster: confirmed live that gitops-cluster-dev/02-argocd-apps/tenant-
+# onboarding/applicationset.yaml already hardcodes the literal "kind-dev" in two
+# places (valuesObject.cluster and its valueFiles path) - there is no real
+# multi-cluster wiring anywhere downstream yet. Matches NodeJSApplication's own
+# precedent of treating single-cluster facts (platformOwner, tenantsRepo) as fixed
+# Composition constants rather than spec fields, not this XRD's own schema. Revisit
+# once a second cluster's tenant-onboarding ApplicationSet actually exists - see
+# service-catalog-design.md Item 3's own note on this.
+#
+# No spec.rollout / image seed: this platform's CICD control plane isn't running on
+# kind-dev yet (same gap NodeJSApplication already reports via CicdOnboarded), so
+# there's no real image to deploy at XR-creation time. The Composition bootstraps
+# values.yaml with rollout: null and reports a WorkloadDeployed: False condition
+# rather than rendering a Rollout that would sit in permanent ImagePullBackOff - see
+# compositions/applicationenvironment/templates/workload-status/status.yaml.
+#
+# Naming convention (not CEL-enforced, matching NodeJSApplication's precedent of not
+# enforcing any naming relationship between an XR and what it creates): name this XR
+# <appName>-kind-dev-<env> - the exact deterministic string every Attached-tier XR
+# (SLO today; future Redis/OAuthServer) independently computes via idp-application's
+# own environmentRef helper (charts/idp-application/templates/_helpers.tpl) when
+# stamping spec.environmentRef.name onto itself. spec.appName/spec.env stay the real
+# source of truth the Composition reads - this XR's own metadata.name is never parsed
+# back apart.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: applicationenvironments.catalog.idp.io
+spec:
+  group: catalog.idp.io
+  names:
+    kind: ApplicationEnvironment
+    plural: applicationenvironments
+    singular: applicationenvironment
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: ["appName", "env"]
+              properties:
+                appName:
+                  type: string
+                  description: >-
+                    Names the owning NodeJSApplication (or future
+                    SpringBootApplication) this env belongs to - labeling/audit
+                    only, no live existence check. Same convention SLO's own
+                    environmentRef already uses: no XRD in this catalog does a
+                    live cross-resource lookup yet (the design doc's "extra
+                    resources lookup" dependency-ordering mechanism is aspirational,
+                    confirmed not built anywhere in this repo). If the named app's
+                    gitops-<appName> repo doesn't actually exist yet, the
+                    RepositoryFile below simply fails to reconcile - visible via
+                    kubectl describe, same failure surface as every other
+                    provider-github resource in this catalog.
+                  minLength: 1
+                env:
+                  type: string
+                  description: >-
+                    Enum, not free-form - a typo'd env would silently create an
+                    orphaned/mismatched values.yaml path and identity.yaml entry
+                    rather than failing at XR admission (same reasoning
+                    NodeJSApplication's nodeVersion/packageManager/visibility
+                    fields already use).
+                  enum: ["dev", "staging", "prod"]
+          required: ["spec"]
