@@ -75,7 +75,15 @@ spec:
                     actually exist yet, the RepositoryFile below simply fails to
                     reconcile - visible via kubectl describe, same failure
                     surface as every other provider-github resource in this
-                    catalog.
+                    catalog. Also drives a real protection.crossplane.io Usage
+                    this env's own Composition composes (spec.of = this named
+                    NodeJSApplication, spec.by = this env) - blocks that app's
+                    deletion while this env still exists, closing the
+                    AppProject/Application deletion-ordering bug
+                    (idp/docs/service-catalog-design.md §0). Still no live
+                    existence check at XR-admission time: if the named app
+                    doesn't actually exist, the Usage simply never matches
+                    anything (harmless no-op).
                   minLength: 1
                 cluster:
                   type: string

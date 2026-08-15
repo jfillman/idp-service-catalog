@@ -1,0 +1,76 @@
+# protection.crossplane.io/v1beta1 Usage - the real Crossplane primitive for the
+# twice-confirmed AppProject/Application deletion-ordering bug (idp/docs/
+# service-catalog-design.md §0 "Where Crossplane runs across a multi-cluster fleet"):
+# pruning NodeJSApplication's own AppProject/tenant onboarding before this env's
+# dependent ArgoCD Application finishes its own finalizer permanently stuck that
+# Application. The design doc originally called for a homegrown extra-resources
+# lookup on NodeJSApplication's own Composition (query for remaining
+# ApplicationEnvironment XRs, refuse deletion if any exist) - superseded here once
+# `kubectl api-resources` confirmed Crossplane itself ships a real primitive for
+# exactly this: protection.crossplane.io/v1beta1 Usage (NOT the deprecated
+# apiextensions.crossplane.io one - `kubectl explain` on that older kind warns to
+# migrate), enforced by a live `crossplane-no-usages` admission webhook already
+# installed with this cluster's Crossplane (nothing new to deploy). Native mechanism
+# over a hand-rolled one: a clean, immediate admission-time rejection on `kubectl
+# delete nodejsapplication` while any Usage still references it, not a finalizer
+# hang - and needs ZERO changes to NodeJSApplication's own Composition/XRD, since the
+# webhook + Usage controller do all the work purely by watching Usage objects,
+# regardless of what composed them.
+#
+# spec.of targets the parent NodeJSApplication by $appName (spec.appName - see
+# xrds/applicationenvironment.yaml's own field description for why trusting it here
+# is safe even though it's otherwise "labeling/audit only, no live existence check":
+# a Usage against a NodeJSApplication that doesn't actually exist by that name is
+# simply never matched by the Usage controller, so it never blocks anything - no
+# admission-time existence check needed for THIS mechanism to be correct, only for
+# the RepositoryFile writes elsewhere in this template, which already fail loudly and
+# separately if $appName doesn't resolve to a real gitops-<appName> repo).
+#
+# $xrNamespace comes from this XR's own metadata (Crossplane v2, scope: Namespaced) -
+# NodeJSApplication and ApplicationEnvironment are always onboarded into the same
+# namespace by this catalog's convention (see both XRDs' own headers), not otherwise
+# derivable from spec.appName alone. Declared locally here rather than added to
+# 00-cluster-gate.yaml's shared var block - doesn't touch that file's existing
+# cluster-registry gate declarations at all.
+#
+# spec.by has no namespace field (by design - "by" is implicitly the same namespace as
+# the Usage object itself, which is this ApplicationEnvironment XR's own namespace,
+# since a namespaced XR's composed namespaced resources land in its own namespace
+# automatically - same implicit placement every RepositoryFile composed elsewhere in
+# this template already relies on, no explicit metadata.namespace needed anywhere).
+#
+# Deliberately UNCONDITIONAL - not wrapped in the $clusterOk gate every other resource
+# in this directory is (see 00-cluster-gate.yaml). "This env references this app"
+# (spec.appName) is true from XR creation regardless of whether the target cluster
+# passed the registry gate - gating this on $clusterOk would let an
+# ApplicationEnvironment targeting an unready/unregistered cluster exist with zero
+# deletion protection on its parent app, reopening exactly the bug this resource
+# exists to close.
+#
+# replayDeletion: true - defensive backstop for the race between this Usage's own
+# creation and the Usage controller labeling NodeJSApplication crossplane.io/in-use
+# (the label crossplane-no-usages' objectSelector keys off): if `kubectl delete
+# nodejsapplication` somehow lands in that narrow window before the label is set, this
+# replays the deletion attempt automatically once the last blocking Usage is actually
+# gone, instead of leaving it needing a manual re-delete.
+<<- $xrNamespace := .observed.composite.resource.metadata.namespace >>
+apiVersion: protection.crossplane.io/v1beta1
+kind: Usage
+metadata:
+  name: <<$xrName>>-app-usage
+  annotations:
+    <<setResourceNameAnnotation "app-usage">>
+spec:
+  of:
+    apiVersion: catalog.idp.io/v1alpha1
+    kind: NodeJSApplication
+    resourceRef:
+      name: <<$appName>>
+      namespace: <<$xrNamespace>>
+  by:
+    apiVersion: catalog.idp.io/v1alpha1
+    kind: ApplicationEnvironment
+    resourceRef:
+      name: <<$xrName>>
+  reason: <<printf "ApplicationEnvironment %s references NodeJSApplication %s via spec.appName - blocks app deletion until every referencing env is gone (idp/docs/service-catalog-design.md §0)" $xrName $appName | toJson>>
+  replayDeletion: true

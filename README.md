@@ -103,6 +103,29 @@ ArgoCD picking up the new tenant unprompted, a real namespace/`ServiceAccount`/
 confirming the orphaned `app.yaml` really does survive the env XR's own deletion, as
 designed. See `idp/docs/service-catalog-design.md` §0 for the full architecture.
 
+**`AppProject`/`Application` deletion-ordering bug — fixed via `protection.
+crossplane.io` `Usage`, live-verified `v0.3.2`.** A real, twice-confirmed bug: deleting
+a `NodeJSApplication` while an `ApplicationEnvironment` still referenced it (via
+`spec.appName`) could strand the dependent ArgoCD `Application` if its `AppProject`
+got pruned before that `Application`'s own finalizer finished. Originally planned as a
+homegrown extra-resources lookup on `NodeJSApplication`'s own Composition — superseded
+before building it: `kubectl api-resources` on `kind-dev` confirmed Crossplane
+already ships a real primitive for exactly this, `protection.crossplane.io/v1beta1`
+`Usage` ("defines a deletion blocking relationship between two resources"), enforced
+by an already-installed `crossplane-no-usages` admission webhook (nothing new to
+deploy). `ApplicationEnvironment`'s Composition now composes one unconditionally
+(`spec.of` = the parent `NodeJSApplication`, `spec.by` = itself) —
+`NodeJSApplication`'s own Composition needed **zero** changes, since the webhook and
+Usage controller do all the blocking purely by watching `Usage` objects. Live-verified
+end-to-end on `kind-dev` with a real throwaway app+env: confirmed the `Usage` object
+and the `crossplane.io/in-use` label it drives on the app, confirmed `kubectl delete`
+on the app is cleanly rejected at admission time (not a finalizer hang) while the env
+exists, confirmed the `Usage` is garbage-collected the moment the env is deleted, and
+confirmed app deletion then succeeds. One real unknown resolved live along the way:
+`function-auto-ready`'s handling of a composed `Usage` resource hadn't been exercised
+in this catalog before — confirmed it reports `Ready: True` correctly, no stuck
+parent readiness.
+
 **`SLO` XRD + Composition — first XRD in the catalog, live-verified on
 `kind-dev`.** Item 4's design (`idp/docs/service-catalog-design.md`), wraps
 Sloth (sloth.dev) rather than hand-rolling multi-window-multi-burn-rate
