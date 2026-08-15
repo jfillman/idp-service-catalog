@@ -107,16 +107,26 @@ spec:
             # catalog's general "redundant-but-harmless idempotent writes over a matrix
             # generator" convention).
             #
-            # deletionPolicy: Orphan - deliberately different from every other RepositoryFile in
-            # this catalog. A real correctness issue found designing this, not discovered live:
-            # if this resource were owned 1:1 by whichever ApplicationEnvironment XR happens to
-            # compose it, deleting ONE env on a cluster (while a sibling env on that SAME cluster
-            # still exists) would delete the cluster's shared app.yaml out from under it,
-            # breaking that cluster's AppProject for the surviving env. Orphan means deleting any
-            # single env's XR never deletes the cluster's shared app.yaml - cleaning it up when
-            # an app is fully decommissioned from a cluster becomes a deliberate, separate
-            # cluster-admin action, not automatic. An accepted, explicitly documented limitation,
-            # not silently left looking solved.
+            # managementPolicies (everything except "Delete") - deliberately different from
+            # every other RepositoryFile in this catalog, which get the provider's default
+            # (management policies on, "*"/all actions). A real correctness issue found
+            # designing this, not discovered live: if this resource were owned 1:1 by whichever
+            # ApplicationEnvironment XR happens to compose it, deleting ONE env on a cluster
+            # (while a sibling env on that SAME cluster still exists) would delete the cluster's
+            # shared app.yaml out from under it, breaking that cluster's AppProject for the
+            # surviving env. Excluding "Delete" means deleting any single env's XR never deletes
+            # the cluster's shared app.yaml - cleaning it up when an app is fully decommissioned
+            # from a cluster becomes a deliberate, separate cluster-admin action, not automatic.
+            # An accepted, explicitly documented limitation, not silently left looking solved.
+            #
+            # NOT spec.deletionPolicy: Orphan - a real, live gotcha this catalog hadn't hit
+            # before. provider-upjet-github v0.19.1's RepositoryFile CRD has no such field at
+            # all (confirmed via `kubectl explain repositoryfile.spec` after a real
+            # ReconcileError: ".spec.deletionPolicy: field not declared in schema") - this
+            # provider version uses the newer ManagementPolicies mechanism exclusively instead,
+            # which is Crossplane's real replacement for deletionPolicy generally. Worth
+            # checking `kubectl explain` for whichever field a provider version actually
+            # supports before assuming the older name still applies.
             #
             # $appName/$cluster/$xrName/$platformOwner/$tenantsRepo/$gitopsRepoUrl all come from
             # 00-cluster-gate.yaml - see that file's header. No appRepoUrl consumer at this
@@ -130,7 +140,7 @@ spec:
               annotations:
                 <<setResourceNameAnnotation "cluster-app-yaml">>
             spec:
-              deletionPolicy: Orphan
+              managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
               providerConfigRef:
                 kind: ClusterProviderConfig
                 name: default
