@@ -189,8 +189,8 @@ spec:
       npm start
       ```
 
-      **CICD pipeline onboarding is not wired up yet** - this app's `NodeJSApplication`
-      resource carries a `CicdOnboarded: False` condition until the platform's CI/CD
-      control plane is migrated onto this cluster. See the resource's own status for
-      details.
+      **CICD pipeline onboarding**: this app's `NodeJSApplication` resource carries a
+      `CicdOnboarded` condition tracking whether `platform-cicd`'s tenant-onboarding
+      ApplicationSet has picked up this app's committed tenant identity yet. See the
+      resource's own status for details.
     commitMessage: "NodeJSApplication scaffold: README.md"

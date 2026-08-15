@@ -6,12 +6,15 @@
 # $xrName convention and Backstage's eventual "New Service" form taking one name field.
 #
 # Deliberately narrow, per the design doc: src repo + boilerplate + an empty, scaffolded
-# gitops-<app-name> repo + a tenants/<app-name>/app.yaml commit. NOT upper-env
-# provisioning (ApplicationEnvironment, a separate future XRD) and NOT a real CICD
-# pipeline (platform-cicd's control plane isn't running on kind-dev yet - a separate,
-# already-scoped migration task, not this one). The Composition reports that gap as a
-# real Ready: False condition rather than silently skipping it or pretending it
-# succeeded - see compositions/nodejsapplication/templates/cicd-onboarding-status.yaml.
+# gitops-<app-name> repo + a tenants/<app-name>/app.yaml commit, PLUS (2026-08-15,
+# platform-cicd's control plane now running on kind-dev - see idp/docs/
+# service-catalog-design.md's NodeJSApplication note) a real tenants/<app-name>/
+# identity.yaml commit into platform-cicd-kind-dev-tenants, onboarding this app's real
+# CICD pipeline via platform-cicd's own tenant-onboarding ApplicationSet. Still NOT
+# upper-env provisioning (ApplicationEnvironment, a separate XRD). The Composition
+# reports CICD-onboarding progress as a real custom CicdOnboarded condition (not Ready
+# itself, which function-go-templating reserves) - see compositions/nodejsapplication/
+# templates/cicd-onboarding-status/status.yaml.
 #
 # No spec.githubOwner: confirmed live against provider-github's own credential-parsing
 # source that `owner` is a ProviderConfig-wide setting (required alongside app_auth),

@@ -36,6 +36,67 @@ spec:
         source: Inline
         inline:
           template: |
+            # Commits tenants/<app-name>/identity.yaml into platform-cicd's own tenants location for
+            # this cluster - read by that repo's tenant-onboarding ApplicationSet (charts/
+            # platform-cicd-control-plane/templates/argocd/tenant-onboarding-applicationset.yaml,
+            # .Values.tenantsRepoUrl) to actually stand up this app's CICD pipeline (Tekton/PaC
+            # Application, RBAC, Triggers - see platform-cicd/docs/onboarding.md's step 3). This is
+            # the real CICD-onboarding-commit step cicd-onboarding-status/status.yaml's own header
+            # comment named as still-stubbed - built 2026-08-15 once platform-cicd's control plane
+            # actually landed on kind-dev (see idp/docs/service-catalog-design.md's NodeJSApplication
+            # note).
+            #
+            # $platformOwner/$gitopsRepoUrl/$appRepoUrl reused from tenant-app-yaml.yaml in this same
+            # step (not redeclared with different values - same platform constants, same computed
+            # URLs, deliberately identical so both files can never silently drift against each
+            # other).
+            #
+            # $tenantsRepo is platform-cicd's OWN tenants repo for this cluster - NOT
+            # gitops-cluster-dev-tenants (tenant-app-yaml.yaml's target, a completely different
+            # schema/purpose: idp's own XR onboarding, not CICD pipeline onboarding). Hardcoded to
+            # platform-cicd-kind-dev-tenants, matching hack/values-kind-dev.yaml's own
+            # tenantsRepoUrl override on the platform-cicd side - this is a Bootstrap-tier XRD,
+            # centralized on kind-dev permanently (idp_session_multicluster_architecture), so unlike
+            # ApplicationEnvironment's spec.cluster there's no per-cluster target to parameterize
+            # here.
+            #
+            # type: app (not infra) - NodeJSApplication only ever provisions regular applications,
+            # never platform-adjacent services, so this is a fixed literal, not a spec field.
+            # catalogNamespace: platform-catalog - fixed platform convention, matches every other
+            # tenant's identity.yaml (platform-cicd/docs/onboarding.md step 3).
+            #
+            # All six platformIdentity fields are present even though platform-cicd's own docs allow
+            # "" for unused ones - gitopsRepoUrl/appRepoUrl are always real here (NodeJSApplication
+            # always provisions both repos), so there's nothing to leave empty.
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $platformOwner := "jfillman" >>
+            <<- $tenantsRepo := "platform-cicd-kind-dev-tenants" >>
+            <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $xrName >>
+            <<- $appRepoUrl := printf "https://github.com/%s/%s.git" $platformOwner $xrName >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-cicd-identity-yaml
+              annotations:
+                <<setResourceNameAnnotation "cicd-identity-yaml">>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$tenantsRepo>>
+                file: <<printf "tenants/%s/identity.yaml" $xrName>>
+                overwriteOnCreate: true
+                content: |
+                  platformIdentity:
+                    appName: <<$xrName>>
+                    type: app
+                    gitopsRepoUrl: <<$gitopsRepoUrl>>
+                    appRepoUrl: <<$appRepoUrl>>
+                    githubOwner: <<$platformOwner>>
+                    catalogNamespace: platform-catalog
+                commitMessage: <<printf "Onboard %s: add tenants/%s/identity.yaml for CICD pipeline onboarding" $xrName $xrName | toJson>>
+            ---
             # Empty, scaffolded gitops-<app-name> repo - idp/docs/service-catalog-design.md Item 1/2:
             # "gitops-<app-name> gets created here, empty, rather than by item 3 [ApplicationEnvironment]
             # - its lifecycle is app-level (create once)". Just a README for now; the real
@@ -273,10 +334,10 @@ spec:
                   npm start
                   ```
 
-                  **CICD pipeline onboarding is not wired up yet** - this app's `NodeJSApplication`
-                  resource carries a `CicdOnboarded: False` condition until the platform's CI/CD
-                  control plane is migrated onto this cluster. See the resource's own status for
-                  details.
+                  **CICD pipeline onboarding**: this app's `NodeJSApplication` resource carries a
+                  `CicdOnboarded` condition tracking whether `platform-cicd`'s tenant-onboarding
+                  ApplicationSet has picked up this app's committed tenant identity yet. See the
+                  resource's own status for details.
                 commitMessage: "NodeJSApplication scaffold: README.md"
             ---
             # Commits tenants/<app-name>/app.yaml into gitops-cluster-dev-tenants - read by that
@@ -344,9 +405,9 @@ spec:
         source: Inline
         inline:
           template: |
-            # Surfaces the CICD-onboarding gap as a custom condition, not an override of the
+            # Surfaces the CICD-onboarding status as a custom condition, not an override of the
             # standard Ready condition - see xrds/nodejsapplication.yaml's own header and
-            # idp/docs/service-catalog-design.md Item 1/2's "real known gap" note for what this is
+            # idp/docs/service-catalog-design.md Item 1/2's "real known gap" note for what this was
             # and why. Ready itself stays real (whatever detect-ready, the pipeline step before this
             # one, computes from the actual provider-github managed resources): function-go-
             # templating's own docs (github.com/crossplane-contrib/function-go-templating,
@@ -357,21 +418,52 @@ spec:
             # composition-resource-name annotation - a real, but different, documented mechanism for
             # a different purpose) rendered with zero effect via crossplane render.
             #
-            # Once the platform-cicd-on-kind-dev migration lands (a separate task - see the doc note
-            # above), this whole step is what gets removed to stop reporting the condition at all.
+            # Real as of 2026-08-15 (platform-cicd-on-kind-dev migration landed - see the doc note
+            # above): checks the actual observed status of the cicd-identity-yaml RepositoryFile
+            # render-github-resources composed this same pipeline invocation (standard Crossplane
+            # managed-resource Ready condition, index [0] since function-go-templating's own
+            # ClaimConditions mechanism - same one this step itself uses - doesn't expose a
+            # find-by-type helper for reading observed conditions, only setting them). Same
+            # redeclare-don't-couple convention applicationenvironment/templates/status/status.yaml
+            # already established for extraResources - each pipeline step has its own template
+            # execution scope.
             <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $allObserved := .observed.resources | default dict >>
+            <<- $identityRes := index $allObserved "cicd-identity-yaml" | default dict >>
+            <<- $identityMR := index $identityRes "resource" | default dict >>
+            <<- $identityStatus := index $identityMR "status" | default dict >>
+            <<- $identityConditions := index $identityStatus "conditions" | default list >>
+            <<- $identityReady := false >>
+            <<- range $identityConditions >>
+              <<- if and (eq .type "Ready") (eq .status "True") >>
+                <<- $identityReady = true >>
+              <<- end >>
+            <<- end >>
             apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
             kind: ClaimConditions
             conditions:
+            <<- if $identityReady >>
+              - type: CicdOnboarded
+                status: "True"
+                reason: CicdOnboarded
+                message: >-
+                  <<$xrName>>'s tenants/<<$xrName>>/identity.yaml committed to
+                  platform-cicd-kind-dev-tenants - platform-cicd's tenant-onboarding ApplicationSet
+                  picks it up on its next poll and stands up the real app-<<$xrName>>-cicd CICD
+                  pipeline.
+                target: CompositeAndClaim
+            <<- else >>
               - type: CicdOnboarded
                 status: "False"
                 reason: CicdOnboardingPending
                 message: >-
-                  <<$xrName>>'s src/gitops repos and tenant identity are provisioned, but CICD
-                  pipeline onboarding is not - platform-cicd's control plane isn't running on this
-                  cluster yet (separate migration task). This condition clears once that migration
-                  lands and onboards this app's app-<<$xrName>>-cicd namespace for real.
+                  <<$xrName>>'s src/gitops repos and tenant identity are provisioned, and
+                  tenants/<<$xrName>>/identity.yaml has been committed to
+                  platform-cicd-kind-dev-tenants, but that RepositoryFile isn't Ready yet (provider-
+                  github still reconciling the commit). Resolves itself once it is - no XR edit
+                  needed.
                 target: CompositeAndClaim
+            <<- end >>
             ---
         delims:
           left: "<<"

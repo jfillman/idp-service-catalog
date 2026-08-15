@@ -1,0 +1,60 @@
+# Commits tenants/<app-name>/identity.yaml into platform-cicd's own tenants location for
+# this cluster - read by that repo's tenant-onboarding ApplicationSet (charts/
+# platform-cicd-control-plane/templates/argocd/tenant-onboarding-applicationset.yaml,
+# .Values.tenantsRepoUrl) to actually stand up this app's CICD pipeline (Tekton/PaC
+# Application, RBAC, Triggers - see platform-cicd/docs/onboarding.md's step 3). This is
+# the real CICD-onboarding-commit step cicd-onboarding-status/status.yaml's own header
+# comment named as still-stubbed - built 2026-08-15 once platform-cicd's control plane
+# actually landed on kind-dev (see idp/docs/service-catalog-design.md's NodeJSApplication
+# note).
+#
+# $platformOwner/$gitopsRepoUrl/$appRepoUrl reused from tenant-app-yaml.yaml in this same
+# step (not redeclared with different values - same platform constants, same computed
+# URLs, deliberately identical so both files can never silently drift against each
+# other).
+#
+# $tenantsRepo is platform-cicd's OWN tenants repo for this cluster - NOT
+# gitops-cluster-dev-tenants (tenant-app-yaml.yaml's target, a completely different
+# schema/purpose: idp's own XR onboarding, not CICD pipeline onboarding). Hardcoded to
+# platform-cicd-kind-dev-tenants, matching hack/values-kind-dev.yaml's own
+# tenantsRepoUrl override on the platform-cicd side - this is a Bootstrap-tier XRD,
+# centralized on kind-dev permanently (idp_session_multicluster_architecture), so unlike
+# ApplicationEnvironment's spec.cluster there's no per-cluster target to parameterize
+# here.
+#
+# type: app (not infra) - NodeJSApplication only ever provisions regular applications,
+# never platform-adjacent services, so this is a fixed literal, not a spec field.
+# catalogNamespace: platform-catalog - fixed platform convention, matches every other
+# tenant's identity.yaml (platform-cicd/docs/onboarding.md step 3).
+#
+# All six platformIdentity fields are present even though platform-cicd's own docs allow
+# "" for unused ones - gitopsRepoUrl/appRepoUrl are always real here (NodeJSApplication
+# always provisions both repos), so there's nothing to leave empty.
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $platformOwner := "jfillman" >>
+<<- $tenantsRepo := "platform-cicd-kind-dev-tenants" >>
+<<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $xrName >>
+<<- $appRepoUrl := printf "https://github.com/%s/%s.git" $platformOwner $xrName >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-cicd-identity-yaml
+  annotations:
+    <<setResourceNameAnnotation "cicd-identity-yaml">>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$tenantsRepo>>
+    file: <<printf "tenants/%s/identity.yaml" $xrName>>
+    overwriteOnCreate: true
+    content: |
+      platformIdentity:
+        appName: <<$xrName>>
+        type: app
+        gitopsRepoUrl: <<$gitopsRepoUrl>>
+        appRepoUrl: <<$appRepoUrl>>
+        githubOwner: <<$platformOwner>>
+        catalogNamespace: platform-catalog
+    commitMessage: <<printf "Onboard %s: add tenants/%s/identity.yaml for CICD pipeline onboarding" $xrName $xrName | toJson>>
