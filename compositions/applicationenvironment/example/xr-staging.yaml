@@ -3,14 +3,21 @@
 # this fixture can't prove the env enum actually rejects a typo, only that the happy
 # path renders correctly. See ../xrds/applicationenvironment.yaml for the schema.
 #
-# metadata.name follows the documented (not enforced) <appName>-kind-dev-<env>
+# metadata.name follows the documented (not enforced) <appName>-<cluster>-<env>
 # convention - the same deterministic string idp-application's own environmentRef
 # helper independently computes for any Attached-tier XR in this env.
+#
+# cluster: kind-prod, not kind-dev - this XRD structurally rejects type: dev
+# clusters (see the XRD's own header), so a meaningful gate-pass fixture has to
+# target an upper-env cluster name. Paired with cluster-registry-ready.yaml
+# (--required-resources) for the gate-pass render; cluster-registry-not-ready.yaml
+# for the gate-fail one - see README.md.
 apiVersion: catalog.idp.io/v1alpha1
 kind: ApplicationEnvironment
 metadata:
-  name: widget-service-kind-dev-dev
+  name: widget-service-kind-prod-staging
   namespace: demo-apps
 spec:
   appName: widget-service
-  env: dev
+  cluster: kind-prod
+  env: staging

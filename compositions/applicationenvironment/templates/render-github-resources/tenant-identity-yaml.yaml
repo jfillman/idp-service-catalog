@@ -1,24 +1,18 @@
-# Commits tenants/<appName>/<env>/identity.yaml into gitops-cluster-dev-tenants -
-# read by that repo's tenant-onboarding ApplicationSet (git generator over
-# tenants/*/*/identity.yaml) to render the real deployment Application via
-# idp-application. Matches gitops-cluster-dev-tenants/README.md's own documented
-# identity.yaml shape exactly (appName/gitopsRepoUrl/githubOwner/env) - deliberately
-# duplicating app.yaml's gitopsRepoUrl/githubOwner rather than requiring the
-# ApplicationSet to join two files (same reasoning that README already gives). No
-# appRepoUrl here - that field only lives on app.yaml (NodeJSApplication's own
-# commit), no consumer at the per-env level.
+# Commits tenants/<appName>/<env>/identity.yaml into that cluster's own
+# gitops-cluster-<cluster>-tenants - read by that repo's tenant-onboarding
+# ApplicationSet (git generator over tenants/*/*/identity.yaml) to render the real
+# deployment Application via idp-application. Matches
+# gitops-cluster-dev-tenants/README.md's own documented identity.yaml shape exactly
+# (appName/gitopsRepoUrl/githubOwner/env) - deliberately duplicating app.yaml's
+# gitopsRepoUrl/githubOwner rather than requiring the ApplicationSet to join two
+# files (same reasoning that README already gives). No appRepoUrl here - that field
+# only lives on app.yaml, no consumer at the per-env level.
 #
-# platformOwner/tenantsRepo are fixed platform constants, not spec fields - same
-# reasoning xrds/nodejsapplication.yaml's own header already uses (owner is a
-# ProviderConfig-wide setting; this catalog only targets one cluster's tenants repo
-# today).
-<<- $xrName := .observed.composite.resource.metadata.name >>
-<<- $spec := .observed.composite.resource.spec >>
-<<- $appName := $spec.appName >>
-<<- $env := $spec.env >>
-<<- $platformOwner := "jfillman" >>
-<<- $tenantsRepo := "gitops-cluster-dev-tenants" >>
-<<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $appName >>
+# $appName/$env/$cluster/$xrName/$platformOwner/$tenantsRepo/$gitopsRepoUrl all come
+# from 00-cluster-gate.yaml - see that file's header for why they're declared once
+# there instead of redeclared per file, and why this whole resource is wrapped in
+# the $clusterOk gate.
+<<- if $clusterOk >>
 apiVersion: repo.github.m.upbound.io/v1alpha1
 kind: RepositoryFile
 metadata:
@@ -39,3 +33,4 @@ spec:
       githubOwner: <<$platformOwner>>
       env: <<$env>>
     commitMessage: <<printf "Onboard %s %s: add tenants/%s/%s/identity.yaml" $appName $env $appName $env | toJson>>
+<<- end >>

@@ -1,0 +1,80 @@
+# Reports exactly one of two mutually-exclusive custom conditions, never both, never
+# neither - renamed from workload-status (singular concern) now that there are two:
+# whether the target cluster passed the registry gate (§0 of
+# service-catalog-design.md), and, only if it did, whether a real workload image
+# exists yet (unchanged from the original WorkloadDeployed mechanism). Reporting
+# WorkloadDeployed when the cluster gate failed would be misleading - nothing was
+# created, so "no image yet" isn't the actual reason there's no deployment.
+#
+# Redeclares the same ExtraResources requirement 00-cluster-gate.yaml (the
+# render-github-resources step) already declares, rather than assuming this step can
+# see that step's now-out-of-scope template variables - each pipeline step is a
+# separate function-go-templating invocation with its own template execution.
+# function-go-templating's own docs confirm extraResources ARE cached in the pipeline
+# context and passed to later steps, so this doesn't trigger a second live fetch -
+# but redeclaring keeps this step self-contained and correct even if the pipeline
+# ever gets reordered, matching this catalog's general "repetition over cross-file
+# coupling" convention (compositions/applicationenvironment/templates/render-github-
+# resources/*.yaml each redeclare $xrName/$spec too).
+#
+# Ready itself stays real (whatever detect-ready, the pipeline step before this one,
+# computes from whichever - if any - composed resources actually exist). Direct
+# extension of NodeJSApplication's own cicd-onboarding-status mechanism -
+# function-go-templating reserves Ready/Healthy/Synced and errors if a Composition
+# tries to set them directly via ClaimConditions - confirmed live during that build.
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $env := $spec.env >>
+<<- $cluster := $spec.cluster >>
+<<- $allExtra := .extraResources | default dict >>
+<<- $entry := index $allExtra "cluster-registry-entry" | default dict >>
+<<- $items := index $entry "items" | default list >>
+<<- $clusterOk := false >>
+<<- if gt (len $items) 0 >>
+  <<- $cm := (index $items 0).resource >>
+  <<- $clusterType := $cm.data.type >>
+  <<- $crossplaneReady := index $cm.data "crossplaneReady" | default "" >>
+  <<- if and (eq $clusterType "upper") (eq $crossplaneReady "true") >>
+    <<- $clusterOk = true >>
+  <<- end >>
+<<- end >>
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ExtraResources
+requirements:
+  cluster-registry-entry:
+    apiVersion: v1
+    kind: ConfigMap
+    namespace: crossplane-system
+    matchName: <<$cluster>>
+---
+<<- if not $clusterOk >>
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ClaimConditions
+conditions:
+  - type: ClusterReady
+    status: "False"
+    reason: ClusterNotEligible
+    message: >-
+      <<$xrName>>'s target cluster (<<$cluster>>) isn't a registered, ready
+      upper-env cluster - either it isn't in the cluster registry yet
+      (gitops-cluster-dev/00-bootstrap/cluster-registry/), it's registered as
+      type: dev (this XRD only ever targets upper-env clusters - see its own
+      header comment), or crossplaneReady isn't "true" yet. No resources have
+      been created. Resolves itself once the registry entry is correct - no XR
+      edit needed.
+    target: CompositeAndClaim
+<<- else >>
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ClaimConditions
+conditions:
+  - type: WorkloadDeployed
+    status: "False"
+    reason: NoImageYet
+    message: >-
+      <<$xrName>>'s <<$env>> values.yaml and tenant identity are provisioned, but
+      rollout is null - there's no real container image to deploy yet
+      (platform-cicd-on-kind-dev migration hasn't landed, and no developer PR has
+      set rollout.image). This condition does not auto-clear once one does; it
+      reflects the state at bootstrap time only.
+    target: CompositeAndClaim
+<<- end >>

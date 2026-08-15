@@ -2,13 +2,15 @@
 set -euo pipefail
 
 # Regenerates composition.yaml's two `source: Inline` template blocks from
-# templates/render-github-resources/*.yaml and templates/workload-status/*.yaml. Run
+# templates/render-github-resources/*.yaml and templates/status/*.yaml. Run
 # this any time you add/edit/remove a file in either directory - composition.yaml is
 # the committed, GitOps-tracked artifact; the templates/ files are the maintainable
 # source. Same split-by-pipeline-step generation approach as
 # compositions/nodejsapplication/build-composition.sh, copied directly (two
 # function-go-templating steps, not one - one composes the real provider-github
-# resources, the other patches the XR's own status afterward).
+# resources (gated by a real extra-resources lookup against the cluster registry,
+# added 2026-08-15 - see templates/render-github-resources/00-cluster-gate.yaml),
+# the other patches the XR's own status afterward).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="${SCRIPT_DIR}/composition.yaml"
@@ -29,20 +31,20 @@ render_dir() {
 }
 
 GITHUB_RESOURCES="$(render_dir "${SCRIPT_DIR}/templates/render-github-resources")"
-WORKLOAD_STATUS="$(render_dir "${SCRIPT_DIR}/templates/workload-status")"
+STATUS="$(render_dir "${SCRIPT_DIR}/templates/status")"
 
 cat > "$OUT" <<HEADER
 # GENERATED FILE - do not hand-edit the pipeline's \`input.inline.template\` blocks
 # below. Edit templates/render-github-resources/*.yaml or
-# templates/workload-status/*.yaml instead, then run ./build-composition.sh to
+# templates/status/*.yaml instead, then run ./build-composition.sh to
 # regenerate this file.
 #
 # Two function-go-templating steps, not one (compositions/nodejsapplication's own
 # pattern, copied directly): render-github-resources composes the real
 # provider-github managed resources (RepositoryFile - see
-# idp/docs/service-catalog-design.md Item 3), workload-status patches the XR's own
-# status afterward with a WorkloadDeployed: False custom condition (see that
-# template's own header for the mechanism and why). Both share the ONE
+# idp/docs/service-catalog-design.md Item 3), status patches the XR's own status
+# afterward with exactly one of ClusterReady: False / WorkloadDeployed: False (see
+# that template's own header for the mechanism and why). Both share the ONE
 # already-installed function-go-templating Function via source: Inline - registering
 # a second Function package pointing at the same reference corrupted Crossplane's
 # shared dependency-lock graph cluster-wide, a real bug hit live building the SLO
@@ -79,7 +81,7 @@ ${GITHUB_RESOURCES}
     - step: detect-ready
       functionRef:
         name: function-auto-ready
-    - step: workload-status
+    - step: status
       functionRef:
         name: function-go-templating
       input:
@@ -88,7 +90,7 @@ ${GITHUB_RESOURCES}
         source: Inline
         inline:
           template: |
-${WORKLOAD_STATUS}
+${STATUS}
         delims:
           left: "<<"
           right: ">>"

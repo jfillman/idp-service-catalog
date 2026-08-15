@@ -1,0 +1,56 @@
+# Real Crossplane extra-resources lookup against the cluster registry
+# (gitops-cluster-dev/00-bootstrap/cluster-registry/, service-catalog-design.md §0) -
+# the first actual use of this mechanism in this catalog, confirmed against
+# function-go-templating v0.12.3's own docs rather than assumed: a `kind:
+# ExtraResources` meta-resource below asks Crossplane's core to fetch a named
+# ConfigMap from the LOCAL cluster (kind-dev, where this Composition's own Crossplane
+# runs - matches Bootstrap-tier's centralized-on-dev design, no cross-cluster read
+# needed for the gate itself). Standard two-pass behavior: the reconcile that first
+# adds this requirement won't see data yet (.extraResources empty) - $clusterOk stays
+# false, same "not found yet, retry next reconcile" shape already used for
+# WorkloadDeployed/CicdOnboarded, not a new failure mode.
+#
+# $clusterOk/$appName/$env/$cluster/$xrName/$gitopsRepoUrl/$tenantsRepo are all
+# declared once here, not redeclared per file below - Go template variables declared
+# at this (unindented) scope persist for the rest of this template's execution
+# across the --- separators, confirmed by this catalog's existing pattern of one big
+# concatenated template per pipeline step (build-composition.sh).
+#
+# Deliberately ONE YAML document in this file, not two - $clusterOk is computed from
+# .extraResources (a fixed input available from the start of this template's
+# execution, regardless of where in the text the ExtraResources requirement below is
+# declared) entirely via template actions with no literal output, BEFORE the
+# ExtraResources document itself. A second, separately `---`-delimited "document"
+# containing only template actions would render to a blank/empty YAML document once
+# executed - untested whether function-go-templating tolerates that, not worth
+# risking when computing everything up front avoids the question entirely.
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $appName := $spec.appName >>
+<<- $env := $spec.env >>
+<<- $cluster := $spec.cluster >>
+<<- $platformOwner := "jfillman" >>
+<<- $tenantsRepo := printf "gitops-cluster-%s-tenants" $cluster >>
+<<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $appName >>
+<<- $allExtra := .extraResources | default dict >>
+<<- $entry := index $allExtra "cluster-registry-entry" | default dict >>
+<<- $items := index $entry "items" | default list >>
+<<- $clusterOk := false >>
+<<- $clusterType := "" >>
+<<- $crossplaneReady := "" >>
+<<- if gt (len $items) 0 >>
+  <<- $cm := (index $items 0).resource >>
+  <<- $clusterType = $cm.data.type >>
+  <<- $crossplaneReady = index $cm.data "crossplaneReady" | default "" >>
+  <<- if and (eq $clusterType "upper") (eq $crossplaneReady "true") >>
+    <<- $clusterOk = true >>
+  <<- end >>
+<<- end >>
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ExtraResources
+requirements:
+  cluster-registry-entry:
+    apiVersion: v1
+    kind: ConfigMap
+    namespace: crossplane-system
+    matchName: <<$cluster>>

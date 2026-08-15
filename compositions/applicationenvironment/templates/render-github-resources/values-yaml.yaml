@@ -1,25 +1,22 @@
 # Commits <cluster>/<env>/values.yaml into the app's own gitops-<appName> repo
 # (already created, empty, by NodeJSApplication - see that XRD's own header). Read by
-# gitops-cluster-dev/02-argocd-apps/tenant-onboarding/applicationset.yaml's second
-# source ($ref'd valueFiles: - $appsrc/kind-dev/{{.env}}/values.yaml).
+# gitops-cluster-<cluster>/02-argocd-apps/tenant-onboarding/applicationset.yaml's
+# second source ($ref'd valueFiles: - $appsrc/<cluster>/{{.env}}/values.yaml).
 #
-# cluster hardcoded to the literal "kind-dev" here, not read from spec - confirmed
-# live that ApplicationSet already hardcodes the same literal in two places
-# (valuesObject.cluster and this exact path), no real multi-cluster wiring exists
-# downstream yet. See xrds/applicationenvironment.yaml's own header for why this
-# isn't a spec field.
+# $clusterOk/$appName/$env/$cluster/$xrName all come from 00-cluster-gate.yaml,
+# declared once there - see that file's own header for why. Wrapped in the gate: if
+# the target cluster isn't a registered, crossplaneReady upper-env cluster, this
+# resource simply isn't rendered at all - the status step reports ClusterReady: False
+# instead, same "structural backstop, refuse rather than partially succeed" instinct
+# already used for the WorkloadDeployed condition below.
 #
 # rollout: null (not a placeholder image) - there's no real image to deploy yet, this
 # platform's CICD control plane isn't running on kind-dev (same gap
 # NodeJSApplication already reports via CicdOnboarded). idp-application's chart
 # already fixture-tests rollout: null cleanly (no Rollout/Service/HPA/PDB rendered,
 # just NetworkPolicy/ServiceAccount) - see charts/idp-application/README.md's "Live-
-# verified" section. The workload-status step below surfaces this gap as a real
-# condition instead of leaving it silently looking finished.
-<<- $xrName := .observed.composite.resource.metadata.name >>
-<<- $spec := .observed.composite.resource.spec >>
-<<- $appName := $spec.appName >>
-<<- $env := $spec.env >>
+# verified" section.
+<<- if $clusterOk >>
 apiVersion: repo.github.m.upbound.io/v1alpha1
 kind: RepositoryFile
 metadata:
@@ -32,12 +29,13 @@ spec:
     name: default
   forProvider:
     repository: <<printf "gitops-%s" $appName>>
-    file: <<printf "kind-dev/%s/values.yaml" $env>>
+    file: <<printf "%s/%s/values.yaml" $cluster $env>>
     overwriteOnCreate: true
     content: |
       appName: <<$appName>>
       appType: app
-      cluster: kind-dev
+      cluster: <<$cluster>>
       envName: <<$env>>
       rollout: null
-    commitMessage: <<printf "Bootstrap %s environment: add kind-dev/%s/values.yaml" $env $env | toJson>>
+    commitMessage: <<printf "Bootstrap %s environment: add %s/%s/values.yaml" $env $cluster $env | toJson>>
+<<- end >>

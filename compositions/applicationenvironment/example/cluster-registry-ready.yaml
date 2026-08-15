@@ -1,0 +1,15 @@
+# --required-resources fixture: simulates the real cluster-registry ConfigMap
+# (gitops-cluster-dev/00-bootstrap/cluster-registry/kind-prod.yaml) once a cluster
+# admin has actually verified the scoped Crossplane+Attached-tier install and
+# flipped crossplaneReady to "true" for real. Paired with xr-staging.yaml for the
+# gate-pass render.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kind-prod
+  namespace: crossplane-system
+  labels:
+    platform.io/cluster-registry: "true"
+data:
+  type: upper
+  crossplaneReady: "true"

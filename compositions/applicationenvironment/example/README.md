@@ -6,28 +6,38 @@ cluster needed. Because the Composition uses `source: Inline` (see
 wrapper script needed.
 
 ```shell
-crossplane render xr-dev.yaml ../composition.yaml functions.yaml -x -r
+# Gate-pass: cluster registered, type: upper, crossplaneReady: "true"
+crossplane render xr-staging.yaml ../composition.yaml functions.yaml -x -r \
+  --required-resources cluster-registry-ready.yaml
+
+# Gate-fail: no --required-resources at all, simulating "not found yet" (same
+# rendered shape as a registered-but-not-ready or type: dev entry - the Composition
+# doesn't distinguish those cases, see 00-cluster-gate.yaml)
+crossplane render xr-staging.yaml ../composition.yaml functions.yaml -x -r
 ```
 
 Requires Docker (`crossplane render` pulls and runs `function-go-templating` /
 `function-auto-ready` in containers by default).
 
 **If you edit `../templates/render-github-resources/*.yaml` or
-`../templates/workload-status/*.yaml`**, run `../build-composition.sh` first to
-regenerate `../composition.yaml` from them before re-running this example — the
-templates are the maintainable source, `composition.yaml` is generated and
-GitOps-tracked.
+`../templates/status/*.yaml`**, run `../build-composition.sh` first to regenerate
+`../composition.yaml` from them before re-running these examples — the templates are
+the maintainable source, `composition.yaml` is generated and GitOps-tracked.
 
-Just one fixture, deliberately — `crossplane render` skips real API-server admission,
-so it can't actually prove the `env` enum rejects a typo (same honest caveat
-`../../nodejsapplication/example/README.md` already states for its own schema-level
-defaults); no fabricated "invalid" fixture that couldn't prove what it claims to.
+`cluster-registry-ready.yaml` is a `--required-resources` fixture simulating the real
+cluster-registry `ConfigMap`
+(`gitops-cluster-dev/00-bootstrap/cluster-registry/kind-prod.yaml`) once a cluster
+admin has verified the scoped Crossplane+Attached-tier install there for real and
+flipped `crossplaneReady` to `"true"`.
 
-This fixture only exercises the Composition's template logic (rendered
-`RepositoryFile` shapes, the `WorkloadDeployed: False` status patch) — it never calls
-the real GitHub API. `crossplane render` treats every `provider-github` managed
-resource as spec-only output; nothing here proves the resources actually reconcile
-against GitHub, or that ArgoCD's `tenant-onboarding` ApplicationSet actually picks up
-the committed `identity.yaml`. That needs a real cluster with `provider-github`
-installed and a real credential — see `idp/docs/service-catalog-design.md` Item 3 and
-this repo's own top-level README for the live-verification path.
+These fixtures only exercise the Composition's template logic (rendered
+`RepositoryFile` shapes including `deletionPolicy: Orphan` on `cluster-app-yaml`, the
+extra-resources gate branching, the `ClusterReady`/`WorkloadDeployed` status patch) —
+they never call the real GitHub API or fetch a real cluster resource.
+`crossplane render` treats every `provider-github` managed resource as spec-only
+output, and `--required-resources` is a local file standing in for what Crossplane's
+core would actually fetch; nothing here proves the resources reconcile against
+GitHub or that a real `ConfigMap` on `kind-dev` gets found the same way. That needs a
+real cluster with `provider-github` installed and a real credential — see
+`idp/docs/service-catalog-design.md` §0 and this repo's own top-level README for the
+live-verification path.
