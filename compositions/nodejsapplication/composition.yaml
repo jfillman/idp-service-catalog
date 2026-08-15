@@ -291,10 +291,23 @@ spec:
             # setting, not a per-repo one; this catalog only targets one cluster's tenants repo
             # today, kind-dev - a real multi-cluster targeting field would need to exist on
             # ApplicationEnvironment, not here, once this platform actually has more than one).
+            #
+            # appRepoUrl (added after the initial live-verification pass, user-flagged): no consumer
+            # in idp's own catalog yet (tenant-appprojects only reads gitopsRepoUrl, to scope the
+            # AppProject's sourceRepos), but real, load-bearing precedent in platform-cicd's OWN
+            # working tenants/<app>/identity.yaml - appRepoUrl there is non-optional, read live by
+            # that repo's tenant-onboarding ApplicationSet to fetch cicd.yaml directly from the src
+            # repo. This is exactly what NodeJSApplication's still-stubbed CICD-onboarding step will
+            # need once the platform-cicd-on-kind-dev migration lands - cheap and deterministic to
+            # record now (same URL shape as gitopsRepoUrl, no extra lookup) rather than adding it
+            # later plus backfilling every app onboarded before then. Field name matches
+            # platform-cicd's real field exactly, not a new name, to minimize friction when that
+            # migration eventually consumes it.
             <<- $xrName := .observed.composite.resource.metadata.name >>
             <<- $platformOwner := "jfillman" >>
             <<- $tenantsRepo := "gitops-cluster-dev-tenants" >>
             <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $xrName >>
+            <<- $appRepoUrl := printf "https://github.com/%s/%s.git" $platformOwner $xrName >>
             apiVersion: repo.github.m.upbound.io/v1alpha1
             kind: RepositoryFile
             metadata:
@@ -312,6 +325,7 @@ spec:
                 content: |
                   appName: <<$xrName>>
                   gitopsRepoUrl: <<$gitopsRepoUrl>>
+                  appRepoUrl: <<$appRepoUrl>>
                   githubOwner: <<$platformOwner>>
                 commitMessage: <<printf "Onboard %s: add tenants/%s/app.yaml" $xrName $xrName | toJson>>
             ---
