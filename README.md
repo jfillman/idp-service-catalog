@@ -90,6 +90,17 @@ env's teardown never deletes a file a sibling env on the same cluster still need
 (confirmed via a real `ReconcileError` + `kubectl explain`, this provider version
 uses `managementPolicies` exclusively).
 
+**`env` opened up from a closed enum to team-chosen names, live-verified 2026-08-15.**
+Was `enum: ["dev", "staging", "prod"]`; traced every real consumer (this Composition's
+own template, the `tenant-onboarding` `ApplicationSet`, the `AppProject`'s own
+`destinations` wildcard) and confirmed nothing branches on the specific value — pure
+path/name interpolation, not encoded business logic. Replaced with a `pattern`
+matching Kubernetes' own DNS-1123 namespace-label rule plus `maxLength: 20`, so an
+invalid value still fails at XR admission instead of downstream. Confirmed live on
+`kind-dev`: a previously-impossible custom name (`perf-test`) reconciles end-to-end
+for real; an invalid one (`Staging!`) is rejected at admission with a clear
+pattern-mismatch error.
+
 **Live-verified end-to-end on a real second cluster**: `kind-prod` bootstrapped for
 real (`gitops-cluster-kind-prod`, reusing its pre-existing ArgoCD instance rather
 than standing up a second one — see that repo's own README), a scoped Crossplane

@@ -101,10 +101,31 @@ spec:
                 env:
                   type: string
                   description: >-
-                    Enum, not free-form - a typo'd env would silently create an
-                    orphaned/mismatched values.yaml path and identity.yaml entry
-                    rather than failing at XR admission (same reasoning
-                    NodeJSApplication's nodeVersion/packageManager/visibility
-                    fields already use).
-                  enum: ["dev", "staging", "prod"]
+                    Which environment this is within the target cluster -
+                    "staging"/"prod", or any team-chosen name (e.g. "qa",
+                    "perf", "demo-2"). Previously a closed enum of exactly
+                    dev/staging/prod (2026-08-13); opened up 2026-08-15 once
+                    tracing every real consumer - this Composition's own
+                    template, the tenant-onboarding ApplicationSet, and the
+                    AppProject's own destinations wildcard
+                    (app-<appName>-*) - confirmed nothing branches on the
+                    specific value, it was always pure path/name
+                    interpolation, not encoded business logic. Constrained by
+                    pattern (not free-form) instead, since this value becomes
+                    a literal Kubernetes namespace-name segment
+                    (app-<appName>-<env>) and a git path segment
+                    (<cluster>/<env>/values.yaml,
+                    tenants/<appName>/<env>/identity.yaml) - a value
+                    Kubernetes' own namespace-name rule (DNS-1123 label)
+                    would reject should fail here, at XR admission with a
+                    clear message, not downstream as an ArgoCD sync failure
+                    or a malformed path. maxLength: 20 is a conservative
+                    budget so app-<appName>-<env> has room to stay under
+                    Kubernetes' 63-char namespace limit - does not by itself
+                    bound appName, though (NodeJSApplication's own XRD has no
+                    length limit on its name today - a pre-existing gap, not
+                    introduced here).
+                  pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                  minLength: 1
+                  maxLength: 20
           required: ["spec"]
