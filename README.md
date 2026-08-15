@@ -63,25 +63,45 @@ a Composition patches them directly — the custom-condition mechanism above is 
 only supported way to express "succeeded except X."
 
 **`ApplicationEnvironment` XRD + Composition — second Bootstrap-tier XRD, built
-2026-08-15.** Item 3's design: given an already-onboarded app (`NodeJSApplication`)
-and an `env` (`dev`/`staging`/`prod`, enum-constrained), pure `provider-github`
-commits two files, no live cluster credential — `kind-dev/<env>/values.yaml` into
-the app's own `gitops-<appName>` repo, and `tenants/<appName>/<env>/identity.yaml`
-into `gitops-cluster-dev-tenants` (read by that repo's `tenant-onboarding`
-ApplicationSet to render the real deployment `Application`). `cluster` is a fixed
-Composition constant (`kind-dev`), not a spec field — confirmed live that the
-already-built `tenant-onboarding` ApplicationSet hardcodes the same literal in two
-places, no real multi-cluster wiring exists downstream yet. The initial
+2026-08-15, extended the same day for real multi-cluster support once a second
+cluster (`kind-prod`) existed to build and live-verify against.** Item 3's design:
+given an already-onboarded app (`NodeJSApplication`) and an `env`
+(`dev`/`staging`/`prod`, enum-constrained), pure `provider-github` commits into the
+app's own `gitops-<appName>` repo and a target cluster's own
+`gitops-cluster-<cluster>-tenants` — no live cluster credential. Initial
 `values.yaml` is an identity-only stub (`rollout: null`) since this platform's CICD
-control plane isn't running on `kind-dev` yet — same scope boundary
-`NodeJSApplication` already drew for its own CICD-onboarding gap, surfaced here as a
-sibling `WorkloadDeployed: False` custom condition (direct copy of
-`NodeJSApplication`'s `CicdOnboarded` mechanism). Confirmed the exact
-`environmentRef.name` shape (`<appName>-<cluster>-<envName>`) this XRD's naming
-convention must satisfy by reading `SLO`'s own XRD/chart helper directly before
-building — `SLO`'s Composition doesn't actually do a live existence-check lookup
-today (the design doc's "extra resources lookup" mechanism is aspirational, not
-built anywhere in this repo).
+control plane isn't running yet — surfaced as a `WorkloadDeployed: False` custom
+condition (direct copy of `NodeJSApplication`'s `CicdOnboarded` mechanism).
+
+`cluster` is a **required, real spec field**, not a hardcoded constant — gated live
+against a new cluster registry (`gitops-cluster-dev/00-bootstrap/cluster-registry/`,
+a `ConfigMap` per cluster, cluster-admin-authored) via a real Crossplane
+extra-resources lookup, the first actual use of that mechanism in this catalog
+(`function-go-templating` natively supports it — confirmed against its own v0.12.3
+docs, no custom function needed). Must resolve to `type: upper` +
+`crossplaneReady: "true"` or the Composition creates nothing and reports
+`ClusterReady: False` instead — `type: dev` is a structural rejection (dev envs
+belong to the separate `platform/envs/`-live-read mechanism, per `gitops-strategy.md`
+§10). Also seeds the target cluster's own `tenants/<appName>/app.yaml` (§6 scopes
+`AppProject` per cluster), with `managementPolicies` excluding `"Delete"` so one
+env's teardown never deletes a file a sibling env on the same cluster still needs —
+**not** `spec.deletionPolicy: Orphan`, a real live gotcha:
+`provider-upjet-github` v0.19.1's `RepositoryFile` CRD has no such field at all
+(confirmed via a real `ReconcileError` + `kubectl explain`, this provider version
+uses `managementPolicies` exclusively).
+
+**Live-verified end-to-end on a real second cluster**: `kind-prod` bootstrapped for
+real (`gitops-cluster-kind-prod`, reusing its pre-existing ArgoCD instance rather
+than standing up a second one — see that repo's own README), a scoped Crossplane
+install (core + `provider-kubernetes` + `function-go-templating`/
+`function-auto-ready` + just the `SLO` XRD — **not** `provider-github`, **not**
+`NodeJSApplication`/`ApplicationEnvironment`, which stay `kind-dev`-only
+permanently). Both the rejection path (`crossplaneReady: "false"` → `ClusterReady:
+False`, zero resources) and the success path (real commits, `kind-prod`'s own
+ArgoCD picking up the new tenant unprompted, a real namespace/`ServiceAccount`/
+`NetworkPolicy`) proven live with a throwaway app, fully torn down after — including
+confirming the orphaned `app.yaml` really does survive the env XR's own deletion, as
+designed. See `idp/docs/service-catalog-design.md` §0 for the full architecture.
 
 **`SLO` XRD + Composition — first XRD in the catalog, live-verified on
 `kind-dev`.** Item 4's design (`idp/docs/service-catalog-design.md`), wraps
