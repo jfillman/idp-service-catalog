@@ -182,6 +182,18 @@ spec:
             # ../../../10-crds-operators/crossplane/provider-github-config.yaml). autoInit: true on
             # every Repository below - RepositoryFile requires the target branch to already exist,
             # which an empty repo doesn't have.
+            #
+            # managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"] (no "Update") on
+            # every RepositoryFile below - deliberately different from applicationenvironment's
+            # cluster-app-yaml.yaml, which stays under full management because nothing but the
+            # composition should ever touch it. These five files (package.json, index.js,
+            # Dockerfile, .gitignore, README.md) are the opposite: real app source a developer is
+            # expected to edit immediately after scaffolding (add dependencies, write a test
+            # script, ...). Under the provider's default "*" policy the controller drift-corrects
+            # any such edit back to this static template on its next reconcile - a real bug hit
+            # live (checkout-api's package.json got a "test" script and an express dependency
+            # added, then silently reverted a couple minutes later, twice). Create-once-then-hands-off
+            # is what "scaffold" is supposed to mean here.
             <<- $xrName := .observed.composite.resource.metadata.name >>
             <<- $spec := .observed.composite.resource.spec >>
             <<- $description := $spec.description | default (printf "%s - a Node.js application" $xrName) >>
@@ -223,6 +235,7 @@ spec:
               annotations:
                 <<setResourceNameAnnotation "src-repo-package-json">>
             spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
                 kind: ClusterProviderConfig
                 name: default
@@ -252,6 +265,7 @@ spec:
               annotations:
                 <<setResourceNameAnnotation "src-repo-index-js">>
             spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
                 kind: ClusterProviderConfig
                 name: default
@@ -286,6 +300,7 @@ spec:
               annotations:
                 <<setResourceNameAnnotation "src-repo-dockerfile">>
             spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
                 kind: ClusterProviderConfig
                 name: default
@@ -310,6 +325,7 @@ spec:
               annotations:
                 <<setResourceNameAnnotation "src-repo-gitignore">>
             spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
                 kind: ClusterProviderConfig
                 name: default
@@ -330,6 +346,7 @@ spec:
               annotations:
                 <<setResourceNameAnnotation "src-repo-readme">>
             spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
                 kind: ClusterProviderConfig
                 name: default
