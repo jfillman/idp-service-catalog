@@ -41,7 +41,7 @@ conditions:
     reason: CicdOnboarded
     message: >-
       <<$xrName>>'s tenants/<<$xrName>>/identity.yaml committed to
-      platform-cicd-kind-dev-tenants - platform-cicd's tenant-onboarding ApplicationSet
+      gitops-cluster-dev-tenants - platform-cicd's tenant-onboarding ApplicationSet
       picks it up on its next poll and stands up the real app-<<$xrName>>-cicd CICD
       pipeline.
     target: CompositeAndClaim
@@ -52,7 +52,7 @@ conditions:
     message: >-
       <<$xrName>>'s src/gitops repos and tenant identity are provisioned, and
       tenants/<<$xrName>>/identity.yaml has been committed to
-      platform-cicd-kind-dev-tenants, but that RepositoryFile isn't Ready yet (provider-
+      gitops-cluster-dev-tenants, but that RepositoryFile isn't Ready yet (provider-
       github still reconciling the commit). Resolves itself once it is - no XR edit
       needed.
     target: CompositeAndClaim

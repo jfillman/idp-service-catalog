@@ -9,8 +9,11 @@
 # gitops-<app-name> repo + a tenants/<app-name>/app.yaml commit, PLUS (2026-08-15,
 # platform-cicd's control plane now running on kind-dev - see idp/docs/
 # service-catalog-design.md's NodeJSApplication note) a real tenants/<app-name>/
-# identity.yaml commit into platform-cicd-kind-dev-tenants, onboarding this app's real
-# CICD pipeline via platform-cicd's own tenant-onboarding ApplicationSet. Still NOT
+# identity.yaml commit into gitops-cluster-dev-tenants (the same repo/commit as
+# app.yaml above - redirected here 2026-08-16 from a dedicated
+# platform-cicd-kind-dev-tenants repo, eliminated once live history showed it only ever
+# held throwaway apps), onboarding this app's real CICD pipeline via platform-cicd's own
+# tenant-onboarding ApplicationSet. Still NOT
 # upper-env provisioning (ApplicationEnvironment, a separate XRD). The Composition
 # reports CICD-onboarding progress as a real custom CicdOnboarded condition (not Ready
 # itself, which function-go-templating reserves) - see compositions/nodejsapplication/

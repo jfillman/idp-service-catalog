@@ -36,29 +36,37 @@ spec:
         source: Inline
         inline:
           template: |
-            # Commits tenants/<app-name>/identity.yaml into platform-cicd's own tenants location for
-            # this cluster - read by that repo's tenant-onboarding ApplicationSet (charts/
+            # Commits tenants/<app-name>/identity.yaml into gitops-cluster-dev-tenants - read by
+            # platform-cicd's own tenant-onboarding ApplicationSet (charts/
             # platform-cicd-control-plane/templates/argocd/tenant-onboarding-applicationset.yaml,
-            # .Values.tenantsRepoUrl) to actually stand up this app's CICD pipeline (Tekton/PaC
-            # Application, RBAC, Triggers - see platform-cicd/docs/onboarding.md's step 3). This is
-            # the real CICD-onboarding-commit step cicd-onboarding-status/status.yaml's own header
-            # comment named as still-stubbed - built 2026-08-15 once platform-cicd's control plane
-            # actually landed on kind-dev (see idp/docs/service-catalog-design.md's NodeJSApplication
-            # note).
+            # .Values.tenantsRepoUrl, pointed here via hack/values-kind-dev.yaml) to actually stand
+            # up this app's CICD pipeline (Tekton/PaC Application, RBAC, Triggers - see
+            # platform-cicd/docs/onboarding.md's step 3). This is the real CICD-onboarding-commit
+            # step cicd-onboarding-status/status.yaml's own header comment named as still-stubbed -
+            # built 2026-08-15 once platform-cicd's control plane actually landed on kind-dev (see
+            # idp/docs/service-catalog-design.md's NodeJSApplication note), redirected here from a
+            # dedicated platform-cicd-kind-dev-tenants repo 2026-08-16 (see $tenantsRepo below).
             #
             # $platformOwner/$gitopsRepoUrl/$appRepoUrl reused from tenant-app-yaml.yaml in this same
             # step (not redeclared with different values - same platform constants, same computed
             # URLs, deliberately identical so both files can never silently drift against each
             # other).
             #
-            # $tenantsRepo is platform-cicd's OWN tenants repo for this cluster - NOT
-            # gitops-cluster-dev-tenants (tenant-app-yaml.yaml's target, a completely different
-            # schema/purpose: idp's own XR onboarding, not CICD pipeline onboarding). Hardcoded to
-            # platform-cicd-kind-dev-tenants, matching hack/values-kind-dev.yaml's own
-            # tenantsRepoUrl override on the platform-cicd side - this is a Bootstrap-tier XRD,
-            # centralized on kind-dev permanently (idp_session_multicluster_architecture), so unlike
-            # ApplicationEnvironment's spec.cluster there's no per-cluster target to parameterize
-            # here.
+            # $tenantsRepo (2026-08-16, redirected): gitops-cluster-dev-tenants - the SAME repo
+            # tenant-app-yaml.yaml already writes app.yaml into, in this same commit. Previously a
+            # dedicated platform-cicd-kind-dev-tenants repo, eliminated once live history showed it
+            # only ever held throwaway verification apps and both platform-cicd/docs/onboarding.md
+            # and idp/README.md confirmed kind-dev's platform-cicd instance is idp-exclusive (unlike
+            # kind-observe, which hosts real, independent, non-idp tenants and keeps its own
+            # platform-cicd.git-relative tenants/ - unaffected by this change). This is a REDIRECT
+            # only, not a schema merge: the identity.yaml content below and platform-cicd's own
+            # tenant-onboarding-applicationset.yaml template (shared with kind-observe) are both
+            # byte-identical to before - only the target repo changed. Confirmed live no AppProject
+            # change is needed either: platform-onboarding's sourceRepos already wildcards
+            # https://github.com/jfillman/*, and tenantsRepoUrl is only ever a generator input, never
+            # gated by sourceRepos at all. This is a Bootstrap-tier XRD, centralized on kind-dev
+            # permanently (idp_session_multicluster_architecture), so unlike ApplicationEnvironment's
+            # spec.cluster there's still no per-cluster target to parameterize here.
             #
             # type: app (not infra) - NodeJSApplication only ever provisions regular applications,
             # never platform-adjacent services, so this is a fixed literal, not a spec field.
@@ -70,7 +78,7 @@ spec:
             # always provisions both repos), so there's nothing to leave empty.
             <<- $xrName := .observed.composite.resource.metadata.name >>
             <<- $platformOwner := "jfillman" >>
-            <<- $tenantsRepo := "platform-cicd-kind-dev-tenants" >>
+            <<- $tenantsRepo := "gitops-cluster-dev-tenants" >>
             <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $xrName >>
             <<- $appRepoUrl := printf "https://github.com/%s/%s.git" $platformOwner $xrName >>
             apiVersion: repo.github.m.upbound.io/v1alpha1
@@ -448,7 +456,7 @@ spec:
                 reason: CicdOnboarded
                 message: >-
                   <<$xrName>>'s tenants/<<$xrName>>/identity.yaml committed to
-                  platform-cicd-kind-dev-tenants - platform-cicd's tenant-onboarding ApplicationSet
+                  gitops-cluster-dev-tenants - platform-cicd's tenant-onboarding ApplicationSet
                   picks it up on its next poll and stands up the real app-<<$xrName>>-cicd CICD
                   pipeline.
                 target: CompositeAndClaim
@@ -459,7 +467,7 @@ spec:
                 message: >-
                   <<$xrName>>'s src/gitops repos and tenant identity are provisioned, and
                   tenants/<<$xrName>>/identity.yaml has been committed to
-                  platform-cicd-kind-dev-tenants, but that RepositoryFile isn't Ready yet (provider-
+                  gitops-cluster-dev-tenants, but that RepositoryFile isn't Ready yet (provider-
                   github still reconciling the commit). Resolves itself once it is - no XR edit
                   needed.
                 target: CompositeAndClaim
