@@ -47,10 +47,18 @@ spec:
             # idp/docs/service-catalog-design.md's NodeJSApplication note), redirected here from a
             # dedicated platform-cicd-kind-dev-tenants repo 2026-08-16 (see $tenantsRepo below).
             #
-            # $platformOwner/$gitopsRepoUrl/$appRepoUrl reused from tenant-app-yaml.yaml in this same
-            # step (not redeclared with different values - same platform constants, same computed
-            # URLs, deliberately identical so both files can never silently drift against each
-            # other).
+            # $platformOwner reused from tenant-app-yaml.yaml in this same step (same platform
+            # constant). gitopsRepoUrl/appRepoUrl below are deliberately NOT reused from there,
+            # unlike the original design - both are .git-suffixed in tenant-app-yaml.yaml (matching
+            # ArgoCD's own repoURL convention, its one confirmed consumer), but platformIdentity's
+            # copies feed PaC's Repository CR spec.url, matched via an EXACT string compare
+            # (pkg/matcher.MatchEventURLRepo, only trims a trailing slash) against GitHub's actual
+            # webhook payload URL - which never has .git. A shared .git-suffixed value here meant
+            # PaC could never match a real push for ANY app onboarded through this Composition,
+            # confirmed live 2026-08-16 (checkout-api's first real push failed with "cannot find a
+            # repository match"). The pre-existing hand-authored kind-observe identity.yaml
+            # (platform-cicd/tenants/nodejs-demo-app/identity.yaml) never had .git here either -
+            # this restores that convention rather than introducing a new one.
             #
             # $tenantsRepo (2026-08-16, redirected): gitops-cluster-dev-tenants - the SAME repo
             # tenant-app-yaml.yaml already writes app.yaml into, in this same commit. Previously a
@@ -79,8 +87,8 @@ spec:
             <<- $xrName := .observed.composite.resource.metadata.name >>
             <<- $platformOwner := "jfillman" >>
             <<- $tenantsRepo := "gitops-cluster-dev-tenants" >>
-            <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $xrName >>
-            <<- $appRepoUrl := printf "https://github.com/%s/%s.git" $platformOwner $xrName >>
+            <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s" $platformOwner $xrName >>
+            <<- $appRepoUrl := printf "https://github.com/%s/%s" $platformOwner $xrName >>
             apiVersion: repo.github.m.upbound.io/v1alpha1
             kind: RepositoryFile
             metadata:
