@@ -39,6 +39,46 @@ appType: app # app | infra - naming-conventions.md's existing distinction (§3, 
 cluster: ""
 envName: ""
 
+# NOT in the schema doc - platform-cicd-specific plumbing (idp-service-catalog is
+# not the only writer of this file: idp-service-catalog's own ApplicationEnvironment
+# composition bootstraps a values.yaml with this null/absent, and platform-cicd's
+# open-release-pr.yaml Task patches this whole block in - see platform-cicd/docs/
+# multi-cluster.md). Null by default - an env bootstrapped but never released
+# through platform-cicd (or one whose upper env isn't cluster-mapped) has no such
+# block and renders none of templates/release-tracking/'s resources.
+#
+# When present, this chart renders two ArgoCD sync-hook Jobs (PostSync/SyncFail -
+# see templates/release-tracking/hooks.yaml) that report the confirmed outcome of
+# THIS sync back to platform-cicd's dev-cluster relay over HTTP with a per-app
+# shared secret - relocated here 2026-08-17 from platform-cicd's own now-retired
+# per-release GitOps writer, specifically so it renders as part of the SAME
+# Application idp's tenant-onboarding ApplicationSet already owns (a second writer
+# would only race it - see platform-cicd/docs/multi-cluster.md's 2026-08-16 note).
+# This is still the only thing that ever crosses from this (upper) cluster back to
+# the dev cluster - a hook Job pushing over HTTP once ArgoCD confirms success/
+# failure, never a live API call in the other direction.
+#
+# Every field here is opaque to this chart - platform-cicd resolves/generates all
+# of it (relayUrl from its own cluster-registry ConfigMap, chainId/flowStartTime/
+# prCreatedAt from the release Pipeline's own tracing/PR-creation results) and
+# writes the whole block in the SAME commit as the rollout.image.* patch above, so
+# it's always current for whichever release is actually being synced.
+releaseTracking: null
+# relayUrl: http://10.89.0.2:30880/outcome/kind-prod  # platform-cicd's argocd-outcome-relay
+# appNamespace: app-checkout-api-cicd     # the APP's platform-cicd namespace (dev cluster) -
+#                                          # NOT this release's own namespace (that's
+#                                          # POD_NAMESPACE, read live by the hook via the
+#                                          # downward API) - see the Trigger this feeds,
+#                                          # platform-cicd's release-outcome-trigger.yaml,
+#                                          # which matches on this field.
+# gitUrl: ""
+# gitRevision: ""
+# flowStartTime: ""
+# chainId: ""
+# prUrl: ""
+# prCreatedAt: ""
+# configJsonB64: ""
+
 # NOT in §3's schema block - added 2026-08-13 when the chart was built, per a v1
 # resource-coverage pass. Without this, every workload (Rollout/Job/CronJob below)
 # silently ran as the namespace's `default` ServiceAccount - fine until the first

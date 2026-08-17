@@ -1,0 +1,52 @@
+{{/*
+templates/release-tracking/rbac.yaml - narrow identity for the PostSync/SyncFail
+outcome-hook Jobs (hooks.yaml, this same directory): get-only on exactly the
+platform-outcome-relay-token Secret this app's own namespace holds. That Secret
+name is hardcoded here (not a values.yaml field) because it's also hardcoded inside
+platform-cicd/catalog/lib/argocd-outcome-hook.sh, the script both hook Jobs run -
+the two have to agree on a literal, and the script is the one baked into an image
+this chart doesn't control, so this follows it, not the other way round.
+
+The Secret itself is hand-provisioned once per app namespace on this cluster - see
+platform-cicd/hack/bootstrap-upper-cluster.sh - never committed to git, never
+passed through this chart. This identity can read that one Secret's one value,
+nothing else - no wildcard get-on-all-secrets.
+*/}}
+{{- if .Values.releaseTracking }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platform-outcome-hook
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: outcome-hook
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: platform-outcome-hook
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: outcome-hook
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["platform-outcome-relay-token"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: platform-outcome-hook
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: outcome-hook
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: platform-outcome-hook }
+subjects:
+  - kind: ServiceAccount
+    name: platform-outcome-hook
+    namespace: {{ include "idp-application.namespace" . }}
+{{- end }}

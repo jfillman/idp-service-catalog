@@ -1,0 +1,77 @@
+{{/*
+templates/release-tracking/hooks.yaml - ArgoCD PostSync (Succeeded) / SyncFail
+(Failed) sync-hook Jobs that report a confirmed release outcome back to
+platform-cicd's dev-cluster relay (argocd-outcome-relay) over HTTP with a per-app
+shared secret - see platform-cicd/docs/multi-cluster.md and platform-cicd/catalog/
+lib/argocd-outcome-hook.sh (the script both Jobs run, baked into the toolbox image
+referenced below, not embedded here). Only rendered when releaseTracking: is set -
+see values.yaml's own header on that field for why and how it gets there.
+
+Ported 2026-08-17 from platform-cicd's own now-removed per-release GitOps writer
+(open-release-pr.yaml used to write these same two Jobs itself, into a SECOND
+Application manifest it also wrote - see platform-cicd/docs/multi-cluster.md's
+"2026-08-16" note for why that whole mechanism was retired). Relocated here,
+unchanged in shape, so it renders as part of the SAME Application idp's
+tenant-onboarding ApplicationSet already owns - open-release-pr.yaml's job is back
+to writing exactly one file (this chart's own values.yaml), never a second,
+competing manifest.
+
+hook-delete-policy: BeforeHookCreation is load-bearing, not cleanup - a Job with
+unchanged content across releases wouldn't be re-applied at all (nothing for ArgoCD
+to diff), so without this the hook would only ever fire on the FIRST sync to this
+env and silently never again. PHASE is the one thing that differs between the two
+Jobs - which hook ran already tells the relay the outcome, no live status read
+needed by the hook itself.
+
+Deliberately NOT using idp-application.serviceAccountName / the shared app
+ServiceAccount (rbac.yaml, this same directory, provisions platform-outcome-hook
+instead) - this is its own narrowly-scoped identity (get on exactly one Secret),
+unrelated to whatever RBAC the app's own workload needs.
+*/}}
+{{- if .Values.releaseTracking }}
+{{- $rt := .Values.releaseTracking }}
+{{- range list (dict "file" "postsync" "hookType" "PostSync" "phase" "Succeeded") (dict "file" "syncfail" "hookType" "SyncFail" "phase" "Failed") }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: platform-outcome-{{ .file }}
+  namespace: {{ include "idp-application.namespace" $ }}
+  annotations:
+    argocd.argoproj.io/hook: {{ .hookType }}
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+  labels:
+    {{- include "idp-application.labels" $ | nindent 4 }}
+    platform.io/subcomponent: outcome-hook
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 60
+  template:
+    metadata:
+      labels:
+        {{- include "idp-application.labels" $ | nindent 8 }}
+    spec:
+      serviceAccountName: platform-outcome-hook
+      restartPolicy: Never
+      containers:
+        - name: notify
+          image: ghcr.io/jfillman/platform-cicd-toolbox:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/opt/platform/lib/argocd-outcome-hook.sh"]
+          env:
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: RELAY_URL, value: {{ $rt.relayUrl | default "" | quote }} }
+            - { name: APP_NAMESPACE, value: {{ $rt.appNamespace | default "" | quote }} }
+            - { name: APP_NAME, value: {{ $.Values.appName | quote }} }
+            - { name: ENV, value: {{ $.Values.envName | quote }} }
+            - { name: PHASE, value: {{ .phase | quote }} }
+            - { name: GIT_URL, value: {{ $rt.gitUrl | default "" | quote }} }
+            - { name: GIT_REVISION, value: {{ $rt.gitRevision | default "" | quote }} }
+            - { name: FLOW_START_TIME, value: {{ $rt.flowStartTime | default "" | quote }} }
+            - { name: CHAIN_ID, value: {{ $rt.chainId | default "" | quote }} }
+            - { name: PR_URL, value: {{ $rt.prUrl | default "" | quote }} }
+            - { name: PR_CREATED_AT, value: {{ $rt.prCreatedAt | default "" | quote }} }
+            - { name: CONFIG_JSON_B64, value: {{ $rt.configJsonB64 | default "" | quote }} }
+---
+{{- end }}
+{{- end }}

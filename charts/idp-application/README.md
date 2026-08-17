@@ -275,6 +275,17 @@ not just successful apply:
   out and the new value landed in the running pods, not just that the annotation
   changed.
 
+## Release-tracking hooks (2026-08-17, sixth pass)
+
+`releaseTracking:` (see `values.yaml`) - two ArgoCD PostSync/SyncFail sync-hook
+Jobs, `templates/release-tracking/`, that report a confirmed release outcome back
+to platform-cicd's dev-cluster relay. Relocated here from platform-cicd's own
+per-release GitOps writer, which used to write a second, competing `Application`
+manifest for this - see `platform-cicd/docs/multi-cluster.md`'s 2026-08-16 note for
+why that raced idp's own ApplicationSet and had to be retired, and this chart's own
+`values.yaml` for the full mechanism. `platform-cicd/open-release-pr.yaml` is the
+only writer of this block; nothing in idp-service-catalog itself ever sets it.
+
 **Two real bugs found and fixed during this pass**:
 
 1. **`rollout.canaryAnalysis` didn't exist at all** - `strategy.canary.analysis`
