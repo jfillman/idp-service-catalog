@@ -286,6 +286,16 @@ why that raced idp's own ApplicationSet and had to be retired, and this chart's 
 `values.yaml` for the full mechanism. `platform-cicd/open-release-pr.yaml` is the
 only writer of this block; nothing in idp-service-catalog itself ever sets it.
 
+**Live-verified same day**, against the real `checkout-api` tenant on `kind-prod`, not
+just `helm template`: a real release wrote a real `releaseTracking:` block, both the
+`PostSync` and `SyncFail` Jobs this chart renders fired for real (confirmed via
+`kubectl get jobs`/pod logs, not inferred), and both reached platform-cicd's relay
+successfully (real `release-outcome-notify` PipelineRuns, a real Slack post, real DORA
+metric increments) - see `platform-cicd/docs/multi-cluster.md`'s "Live-verified end to
+end, 2026-08-17" section for the full account, including three unrelated `kind-prod`
+infra gaps found and fixed along the way (missing Argo Rollouts/ServiceMonitor CRDs, an
+undeployed relay, no private-registry pull credential).
+
 **Two real bugs found and fixed during this pass**:
 
 1. **`rollout.canaryAnalysis` didn't exist at all** - `strategy.canary.analysis`
