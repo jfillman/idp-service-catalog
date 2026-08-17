@@ -9,6 +9,25 @@ this repo is where it's actually built.
 
 ## Status
 
+**`SecretStore` XRD + `infisical-secretstore-operator` — Item 8, done, live-verified
+end-to-end 2026-08-17.** `xrds/secretstore.yaml` + `compositions/secretstore/`
+render an `InfisicalProject` CR (reconciled by a new kopf/Python operator,
+`operators/infisical-secretstore-operator/`, against Infisical's real REST API -
+no native Crossplane provider exists, ruled out `provider-terraform` too, see the
+operator's own README for the "Q1" reasoning) and an ESO `ClusterSecretStore`
+wrapped in a `provider-kubernetes` `Object` (Crossplane v2 rejects composing a
+cluster-scoped resource directly from this namespaced XR - same fix
+`NodeJSApplication`'s `provider-github` already needed). Full chain live-proven on
+`kind-dev`: real Infisical project + identity + Universal Auth credentials → a
+`Ready: True` `ClusterSecretStore` → a real secret written via Infisical's API →
+pulled by a real `ExternalSecret` into a real K8s Secret with the correct value.
+Also fixed a real, pre-existing bug this surfaced in `idp-application`'s own
+`ExternalSecret` template (`remoteRef.property` broke every pull against
+Infisical). **Not yet built**: wiring into `ApplicationEnvironment`'s
+auto-provisioning (create-on-first-env, reference on later ones) - this XRD is
+standalone-creatable only for now, same as `SLO` before any Attached-tier
+auto-provisioning existed - separate follow-up.
+
 **AI-triage mechanism (Phase 2, first slice) — done, live-verified
 2026-08-13.** `functions/function-rollout-watcher` + `functions/diagnosis-holmes-dispatch`:
 a Crossplane Composition Function that watches an Argo Rollout and, on
