@@ -16,8 +16,6 @@ OpenAPI spec (app.infisical.com/api/docs/json, 1453 paths - our own self-hosted
 instance's /api/docs/json is a stub that doesn't serve the real spec), not guessed
 or trusted from summarized docs alone.
 """
-import base64
-import json
 import logging
 import os
 import re
@@ -60,31 +58,20 @@ def _req(method: str, path: str, **kwargs) -> dict:
 
 def get_org_id() -> str:
     """
-    Infisical's identity access tokens are JWTs. Rather than guess the Infisical
-    CLI's Go template field name for the bootstrap output's organization id (the
-    chart's own default --k8-secret-template only captures .Identity.Credentials.Token,
-    docs don't show the Organization struct's exact field casing), decode the JWT
-    payload directly - standard, no-signature-check technique for a token we already
-    legitimately hold - and look for the claim under either common name. Falls back to
-    INFISICAL_ORG_ID if neither claim is present, set once the real token's claim
-    shape is confirmed empirically.
+    INFISICAL_ORG_ID is required, not derived. A JWT-claim-decode approach was tried
+    first (the instance-admin token is a JWT, decoding its payload for an
+    organizationId/orgId claim needs no extra API call) - confirmed NOT to work
+    against a real bootstrap token: its actual claims are only {authTokenType, iat,
+    identityAccessTokenId, identityId}, no org claim at all. The real value has to
+    come from a real API call instead (GET /api/v1/identities/{identityId}, using
+    the identityId decoded from that same JWT) - not worth re-doing on every pod
+    start for a value that's a stable, one-time platform fact (this cluster's one
+    permanent org, created once by the bootstrap Job), so it's looked up once by
+    hand and committed as this Deployment's own INFISICAL_ORG_ID env var instead.
     """
-    if ORG_ID_OVERRIDE:
-        return ORG_ID_OVERRIDE
-    parts = ADMIN_TOKEN.split(".")
-    if len(parts) != 3:
-        raise RuntimeError(
-            "INFISICAL_ADMIN_TOKEN doesn't look like a JWT and INFISICAL_ORG_ID isn't set"
-        )
-    padded = parts[1] + "=" * (-len(parts[1]) % 4)
-    claims = json.loads(base64.urlsafe_b64decode(padded))
-    for key in ("organizationId", "orgId"):
-        if key in claims:
-            return claims[key]
-    raise RuntimeError(
-        f"No organizationId/orgId claim in admin token (claims present: "
-        f"{sorted(claims.keys())}) - set INFISICAL_ORG_ID explicitly instead"
-    )
+    if not ORG_ID_OVERRIDE:
+        raise RuntimeError("INFISICAL_ORG_ID is required - see this function's docstring")
+    return ORG_ID_OVERRIDE
 
 
 def find_project_by_slug(slug: str) -> dict | None:

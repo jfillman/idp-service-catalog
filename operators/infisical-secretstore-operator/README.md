@@ -52,10 +52,10 @@ deliberately skips Infisical's default 3-environment scaffold and creates one.
 - **No image registry / CI pipeline yet** - built locally, `kind load
   image-archive`'d into kind-dev directly. Not representative of how this would run
   on kind-prod.
-- **`INFISICAL_ORG_ID` discovery via JWT-claim decode is unverified** against a real
-  token as of this writing - see `main.py`'s `get_org_id()`. Confirm the claim name
-  once `infisical-bootstrap-secret` exists for real; set the `INFISICAL_ORG_ID` env
-  var override on the Deployment if the claim isn't there.
+- **`INFISICAL_ORG_ID` is a required, manually-looked-up constant**, not derived at
+  runtime - a JWT-claim-decode approach was tried first, confirmed live NOT to work
+  (real bootstrap tokens carry no org claim at all) - see `main.py`'s `get_org_id()`
+  for the full story and how the real value gets looked up per-cluster.
 - **`ensure_project_membership` is called on every reconcile**, not just on create -
   intentionally cheap/idempotent (re-adding an existing member is a no-op per the
   endpoint's own schema), so this isn't a bug, just worth knowing it's not
