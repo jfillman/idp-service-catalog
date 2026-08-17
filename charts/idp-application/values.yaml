@@ -54,11 +54,28 @@ serviceAccount:
   imagePullSecrets: []
   # [{name: <existing-secret-name>}] - attached to the ServiceAccount once, inherited
   # by every pod (Rollout/Job/CronJob) via serviceAccountName, rather than repeating
-  # imagePullSecrets on each pod spec separately. This chart does NOT create the
-  # underlying pull-secret itself (unlike platform-cicd's own
-  # registry-credentials-external-secret.yaml) - assumes one is already provisioned
-  # into this namespace by cluster/tenant onboarding. Real, not-yet-resolved
-  # question for whoever builds that mechanism - flagged, not designed here.
+  # imagePullSecrets on each pod spec separately. Merged with registryCredentials'
+  # own generated secret below (if enabled), so an app can list additional
+  # pre-existing pull secrets here alongside it.
+
+# Resolves the "Real, not-yet-resolved question for whoever builds that mechanism"
+# this file used to flag right above serviceAccount.imagePullSecrets: a pod whose
+# image lives in a private registry (ghcr.io/<owner> packages default to private on
+# first push) can't actually pull it without one. Real 401 hit live on checkout-api's
+# dev Rollout. Off by default (existing releases that already provision their own
+# pull secret, or use a public registry, get zero behavior change) - set
+# registryCredentials.enabled: true and this chart creates one ExternalSecret pulling
+# from the SAME shared platform-secret-store ClusterSecretStore/registry-credentials
+# key platform-cicd-app's own registry-credentials-external-secret.yaml already uses
+# (cluster-scoped, so any namespace/ArgoCD-instance can reference it by name - no new
+# plumbing needed on the ESO/backend side), and wires it onto the ServiceAccount
+# automatically.
+registryCredentials:
+  enabled: false
+  secretStore:
+    name: platform-secret-store
+    kind: ClusterSecretStore
+  remoteKey: registry-credentials
 
 # --- Embedded: workload (Argo Rollout) --------------------------------------
 #

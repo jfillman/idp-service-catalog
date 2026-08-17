@@ -82,11 +82,15 @@ though `service-catalog-design.md` was updated with a pointer to this pass.
   point for scoped RBAC, private-registry pulls (`serviceAccount.imagePullSecrets`),
   and a future cloud workload-identity annotation
   (`serviceAccount.annotations`) - none of which retrofit cleanly onto pods that
-  already ran as the namespace's implicit `default` SA. This chart does **not**
-  create the underlying image-pull Secret itself (unlike platform-cicd's own
-  `registry-credentials-external-secret.yaml`) - assumes one is already
-  provisioned into the namespace by cluster/tenant onboarding. Real,
-  not-yet-resolved question for whoever builds that mechanism.
+  already ran as the namespace's implicit `default` SA. **`registryCredentials.enabled`**
+  (off by default) makes this chart create the pull Secret itself too - one
+  `ExternalSecret` synced from the same shared `platform-secret-store`
+  `ClusterSecretStore`/`registry-credentials` key platform-cicd-app's own
+  `registry-credentials-external-secret.yaml` already uses, auto-appended onto
+  `serviceAccount.imagePullSecrets`. Real 401 hit live on checkout-api's dev Rollout
+  (a freshly-pushed GHCR package defaults to private) is what resolved the "assumes
+  one is already provisioned by cluster/tenant onboarding" gap this section used to
+  flag as unresolved.
 - **`jobs:`/`cronJobs:`** - one-off and scheduled batch tasks, both sharing the
   main workload's `env`/`secrets`/`configMaps`/`volumes` automatically (same
   app, same config, no opt-in) and falling back to `rollout.image` when an
