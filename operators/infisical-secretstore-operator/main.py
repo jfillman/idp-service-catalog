@@ -104,9 +104,18 @@ def ensure_environment(project_id: str, slug: str) -> dict:
 
 
 def find_identity_by_name(org_id: str, name: str) -> dict | None:
-    for identity in _req("GET", "/api/v1/identities", params={"orgId": org_id}).get("identities", []):
-        if identity["name"] == name:
-            return identity
+    # GET /api/v1/identities returns org-membership rows, not identities directly -
+    # confirmed live: each item's own top-level `id` is the MEMBERSHIP row's id, not
+    # the identity's (that's `identityId` / the nested `identity.id`, both equal).
+    # The name lives under the nested `identity` object too, not top-level. POST
+    # (create_identity) returns a genuinely flat {id, name, ...} shape, unlike this
+    # endpoint - normalized to that same flat shape here so reconcile()'s
+    # identity["id"]/identity["name"] usage works the same regardless of which path
+    # produced it.
+    for row in _req("GET", "/api/v1/identities", params={"orgId": org_id}).get("identities", []):
+        inner = row.get("identity", {})
+        if inner.get("name") == name:
+            return {"id": row["identityId"], "name": inner["name"]}
     return None
 
 
