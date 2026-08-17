@@ -1,0 +1,9 @@
+apiVersion: catalog.idp.io/v1alpha1
+kind: SecretStore
+metadata:
+  name: checkout-api-kind-dev
+  namespace: app-checkout-api-cicd
+spec:
+  appRef:
+    name: checkout-api
+  cluster: kind-dev

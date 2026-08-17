@@ -209,7 +209,7 @@ def reconcile(spec: dict, status: dict, meta: dict, namespace: str, name: str,
               patch: kopf.Patch, logger, **_):
     org_id = get_org_id()
     project_name = spec["projectName"]
-    project_slug = slugify(project_name)
+    project_slug = spec.get("slug") or slugify(project_name)
     env_slug = spec.get("environmentSlug", "shared")
     secret_name = spec.get("credentialsSecretName", f"{name}-infisical-creds")
 

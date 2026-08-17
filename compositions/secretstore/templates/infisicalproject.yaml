@@ -1,0 +1,30 @@
+# Rendered by function-go-templating (source: Inline, see composition.yaml/
+# build-composition.sh), double-angle-bracket delimiters (no PromQL/Sloth-syntax
+# collision reason here like the SLO Composition has, but kept consistent with this
+# catalog's one other Inline-mode Composition rather than introducing a second
+# delimiter convention for no reason).
+#
+# NOTE: never write two literal delimiter characters adjacent to each other
+# anywhere in this file outside a real action, including in comments - the lexer
+# scans raw text for the pair regardless of YAML comment syntax, and an accidental
+# empty action fails the whole render (hit this live building this exact file).
+#
+# $xrName doubles as BOTH the Infisical project slug and this InfisicalProject CR's
+# own name - deliberate, see xrds/secretstore.yaml's header. No ExtraResources
+# lookup needed: every value below is knowable from this XR's own spec/name on the
+# very first reconcile.
+<<- $spec := .observed.composite.resource.spec >>
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $envSlug := $spec.environmentSlug | default "shared" >>
+apiVersion: secrets.idp.io/v1alpha1
+kind: InfisicalProject
+metadata:
+  name: <<$xrName>>
+  annotations:
+    <<setResourceNameAnnotation "infisical-project">>
+spec:
+  projectName: <<$xrName>>
+  slug: <<$xrName>>
+  environmentSlug: <<$envSlug>>
+  credentialsSecretName: <<printf "%s-infisical-creds" $xrName>>
+---

@@ -1,0 +1,131 @@
+# GENERATED FILE - do not hand-edit the pipeline's `input.inline.template`
+# block below. Edit templates/*.yaml instead, then run ./build-composition.sh
+# to regenerate this file. See compositions/slo/build-composition.sh for why
+# this catalog uses `source: Inline` for every Composition rather than
+# `source: FileSystem` against a shared mount.
+#
+# Renders an InfisicalProject CR (reconciled by infisical-secretstore-operator,
+# gitops-cluster-dev/10-crds-operators/infisical-secretstore-operator/) and an ESO
+# ClusterSecretStore pointed at the credentials that operator produces -
+# idp/docs/service-catalog-design.md Item 8. NOT yet wired into
+# ApplicationEnvironment's auto-provisioning (create-on-first-env, reference on
+# later ones) - this XRD is standalone-creatable for this first pass, same as SLO
+# was before any Attached-tier auto-provisioning existed. That wiring needs the
+# idempotent-git-file-write mechanism discussed for the "N sibling XRs, one shared
+# resource" problem - separate follow-up, deliberately not bolted on here.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: secretstores.catalog.idp.io
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.idp.io/v1alpha1
+    kind: SecretStore
+  mode: Pipeline
+  pipeline:
+    - step: render-secretstore-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            # Rendered by function-go-templating (source: Inline, see composition.yaml/
+            # build-composition.sh).
+            #
+            # spec.provider.infisical schema confirmed against ESO's own vendored CRD
+            # (10-crds-operators/external-secrets/, chart pin 2.8.0 - the exact provider block
+            # shape, incl. secretsScope.{projectSlug,environmentSlug,secretsPath} and
+            # auth.universalAuthCredentials.{clientId,clientSecret} as SecretKeySelectors, was
+            # checked directly against the vendored CRD source, not assumed from docs).
+            #
+            # hostAPI points at this cluster's own in-cluster Infisical Service - the default
+            # (https://app.infisical.com/api) is Infisical's SaaS, wrong for a self-hosted
+            # on-prem instance. clientId/clientSecret reference the credentials Secret
+            # InfisicalProject's operator writes (same namespace as this XR, hence this app's
+            # own namespace - see infisicalproject.yaml's credentialsSecretName) - that Secret
+            # doesn't exist yet on this store's very first reconcile (the operator writes it
+            # asynchronously, seconds after the InfisicalProject CR appears) - not a problem,
+            # same eventual-consistency shape as any other not-yet-ready secretKeyRef; ESO's
+            # own controller reports Ready:False until it resolves, then self-heals, no
+            # ordering/wait logic needed in this Composition.
+            #
+            # spec.conditions.namespaceRegexes restricts this store to exactly this app's own
+            # namespaces on this cluster (item 8's resolved scope: "cluster-scoped" doesn't mean
+            # "visible to every app") - app-<appName>-<env>, this catalog's live-confirmed
+            # namespace convention (kind-dev: app-checkout-api-dev, app-widget-api-dev; kind-prod:
+            # app-checkout-api-prod - checked directly via `kubectl get ns`, not assumed).
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $xrNamespace := .observed.composite.resource.metadata.namespace >>
+            <<- $appName := $spec.appRef.name >>
+            <<- $envSlug := $spec.environmentSlug | default "shared" >>
+            <<- $credsSecretName := printf "%s-infisical-creds" $xrName >>
+            apiVersion: external-secrets.io/v1
+            kind: ClusterSecretStore
+            metadata:
+              name: <<$xrName>>
+              annotations:
+                <<setResourceNameAnnotation "cluster-secret-store">>
+            spec:
+              conditions:
+                - namespaceRegexes:
+                    - <<printf "^app-%s-.*$" $appName | toJson>>
+              provider:
+                infisical:
+                  hostAPI: "http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080/api"
+                  auth:
+                    universalAuthCredentials:
+                      clientId:
+                        name: <<$credsSecretName>>
+                        namespace: <<$xrNamespace>>
+                        key: clientId
+                      clientSecret:
+                        name: <<$credsSecretName>>
+                        namespace: <<$xrNamespace>>
+                        key: clientSecret
+                  secretsScope:
+                    projectSlug: <<$xrName>>
+                    environmentSlug: <<$envSlug>>
+                    secretsPath: "/"
+            ---
+            ---
+            # Rendered by function-go-templating (source: Inline, see composition.yaml/
+            # build-composition.sh), double-angle-bracket delimiters (no PromQL/Sloth-syntax
+            # collision reason here like the SLO Composition has, but kept consistent with this
+            # catalog's one other Inline-mode Composition rather than introducing a second
+            # delimiter convention for no reason).
+            #
+            # NOTE: never write two literal delimiter characters adjacent to each other
+            # anywhere in this file outside a real action, including in comments - the lexer
+            # scans raw text for the pair regardless of YAML comment syntax, and an accidental
+            # empty action fails the whole render (hit this live building this exact file).
+            #
+            # $xrName doubles as BOTH the Infisical project slug and this InfisicalProject CR's
+            # own name - deliberate, see xrds/secretstore.yaml's header. No ExtraResources
+            # lookup needed: every value below is knowable from this XR's own spec/name on the
+            # very first reconcile.
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $envSlug := $spec.environmentSlug | default "shared" >>
+            apiVersion: secrets.idp.io/v1alpha1
+            kind: InfisicalProject
+            metadata:
+              name: <<$xrName>>
+              annotations:
+                <<setResourceNameAnnotation "infisical-project">>
+            spec:
+              projectName: <<$xrName>>
+              slug: <<$xrName>>
+              environmentSlug: <<$envSlug>>
+              credentialsSecretName: <<printf "%s-infisical-creds" $xrName>>
+            ---
+            ---
+        delims:
+          left: "<<"
+          right: ">>"
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready
