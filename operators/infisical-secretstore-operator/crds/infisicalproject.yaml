@@ -93,7 +93,6 @@ spec:
                     InfisicalProject's own namespace) holding the generated Universal
                     Auth clientId/clientSecret - what the SecretStore XRD's
                     ClusterSecretStore authenticates with.
-              additionalProperties: false
             status:
               type: object
               properties:
@@ -112,4 +111,3 @@ spec:
                   type: string
                 credentialsSecretName:
                   type: string
-              additionalProperties: false
