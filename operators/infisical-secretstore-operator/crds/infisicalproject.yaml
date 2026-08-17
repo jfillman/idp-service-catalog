@@ -1,0 +1,105 @@
+# InfisicalProject - the CRD this operator reconciles. One per (app, cluster) pair,
+# per service-catalog-design.md Item 8's scope decision - created by the SecretStore
+# XRD's Composition (idp-service-catalog/compositions/secretstore/), never directly by
+# a developer.
+#
+# Namespaced (not cluster-scoped) - matches every other XR/composed-resource
+# convention already established in this catalog (ApplicationEnvironment,
+# NodeJSApplication are all namespaced). The credentials Secret this operator writes
+# lands in the same namespace as the InfisicalProject CR itself.
+#
+# Why a plain CRD + operator instead of a Crossplane provider/Composition Function -
+# see service-catalog-design.md Item 8's "Q1" discussion: a Composition Function is a
+# stateless render pass with no delete-lifecycle hook, wrong layer for something with
+# a real external CRUD lifecycle. This is deliberately a THIN, purpose-built
+# controller (kopf/Python, matching this project's existing convention for
+# function-rollout-watcher-style controllers) - not a general-purpose Infisical
+# provider, just enough surface for what the SecretStore XRD needs.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: infisicalprojects.secrets.idp.io
+spec:
+  group: secrets.idp.io
+  scope: Namespaced
+  names:
+    kind: InfisicalProject
+    plural: infisicalprojects
+    singular: infisicalproject
+    shortNames: ["ip"]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Project
+          type: string
+          jsonPath: .status.projectSlug
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [projectName]
+              properties:
+                projectName:
+                  type: string
+                  maxLength: 64
+                  description: >-
+                    Infisical project display name AND the source for its slug
+                    (deterministically slugified, e.g. "checkout-api-kind-dev") -
+                    this catalog's convention is <appName>-<cluster>, but this CRD
+                    itself doesn't know about apps/clusters, only project identity -
+                    that mapping is the SecretStore XRD's job, not this operator's.
+                environmentSlug:
+                  type: string
+                  default: shared
+                  description: >-
+                    The single Infisical environment created for this project. Real
+                    per-env (dev/staging/prod) separation happens via secretsPath
+                    folders inside this one environment, not via separate Infisical
+                    environments - ESO's own `infisical` SecretStore provider pins
+                    exactly one environmentSlug per ClusterSecretStore
+                    (spec.provider.infisical.secretsScope.environmentSlug), so sharing
+                    one store across an app's dev/staging/prod envs on the same
+                    cluster only works if they all live under one Infisical
+                    environment, split by path instead - confirmed against ESO's
+                    real CRD schema (external-secrets/application.yaml's own vendored
+                    reference), not assumed.
+                credentialsSecretName:
+                  type: string
+                  description: >-
+                    Name of the Kubernetes Secret this operator creates (in this
+                    InfisicalProject's own namespace) holding the generated Universal
+                    Auth clientId/clientSecret - what the SecretStore XRD's
+                    ClusterSecretStore authenticates with.
+              additionalProperties: false
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: ["Pending", "Ready", "Failed"]
+                message:
+                  type: string
+                projectId:
+                  type: string
+                projectSlug:
+                  type: string
+                environmentSlug:
+                  type: string
+                identityId:
+                  type: string
+                credentialsSecretName:
+                  type: string
+              additionalProperties: false
