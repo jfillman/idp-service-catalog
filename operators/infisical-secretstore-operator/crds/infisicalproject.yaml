@@ -50,7 +50,7 @@ spec:
           properties:
             spec:
               type: object
-              required: [projectName]
+              required: [projectName, authMethod]
               properties:
                 projectName:
                   type: string
@@ -90,9 +90,25 @@ spec:
                   type: string
                   description: >-
                     Name of the Kubernetes Secret this operator creates (in this
-                    InfisicalProject's own namespace) holding the generated Universal
-                    Auth clientId/clientSecret - what the SecretStore XRD's
-                    ClusterSecretStore authenticates with.
+                    InfisicalProject's own namespace) holding this identity's
+                    credentials - shape depends on authMethod (identityId only for
+                    kubernetes, clientId+clientSecret for universal).
+                authMethod:
+                  type: string
+                  enum: ["kubernetes", "universal"]
+                  description: >-
+                    How this identity authenticates - set by the SecretStore XRD's
+                    Composition from a cluster-registry lookup (kind-dev ->
+                    kubernetes, every upper cluster -> universal), never a
+                    developer-facing choice. kubernetes: zero-persisted-credential,
+                    verified live against this cluster's own TokenReview API - only
+                    possible because Infisical and the workload are always on the
+                    SAME cluster there. universal: a real, persisted
+                    clientId/clientSecret - required for upper clusters, since
+                    Infisical (kind-dev only) can't call TokenReview against a
+                    DIFFERENT cluster's API without Gateway mode (Enterprise-only).
+                    See idp/docs/service-catalog-design.md Item 8's multi-cluster
+                    revision for the full tradeoff.
             status:
               type: object
               properties:
@@ -110,4 +126,6 @@ spec:
                 identityId:
                   type: string
                 credentialsSecretName:
+                  type: string
+                authMethod:
                   type: string

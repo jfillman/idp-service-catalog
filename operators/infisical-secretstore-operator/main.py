@@ -15,6 +15,12 @@ Every endpoint this client calls was confirmed against Infisical's real, live
 OpenAPI spec (app.infisical.com/api/docs/json, 1453 paths - our own self-hosted
 instance's /api/docs/json is a stub that doesn't serve the real spec), not guessed
 or trusted from summarized docs alone.
+
+Each InfisicalProject's machine identity authenticates via Kubernetes Auth, not
+Universal Auth - no clientId/clientSecret is ever minted or persisted anywhere.
+See configure_kubernetes_auth()'s docstring for the actual mechanism (ESO's own
+controller SA token, verified live via this cluster's TokenReview API on every
+login - nothing app-facing to steal, rotate, or leak).
 """
 import logging
 import os
@@ -35,6 +41,48 @@ ADMIN_TOKEN = os.environ["INFISICAL_ADMIN_TOKEN"]
 # rather than guessing the Infisical CLI's internal Go struct field names.
 ORG_ID_OVERRIDE = os.environ.get("INFISICAL_ORG_ID")
 
+# Kubernetes Auth config for every InfisicalProject identity this operator creates -
+# see configure_kubernetes_auth() below. K8S_HOST is this cluster's own API server as
+# reachable from INFISICAL's pod (same cluster, always - a ClusterSecretStore is
+# structurally local to one cluster's API, so Infisical and the workload calling it
+# are never on different clusters here). Must be the FULLY-qualified in-cluster DNS
+# name, not the short `kubernetes.default.svc` form - confirmed live (real failure,
+# not a guess): Infisical's own backend validates this host eagerly at config-POST
+# time via Node's dns.resolve4 (c-ares), which does a raw query with no
+# /etc/resolv.conf search-domain expansion, unlike a normal pod's glibc getaddrinfo -
+# `kubernetes.default.svc` alone hit `queryA ENOTFOUND`, `.cluster.local` fixed it.
+K8S_HOST = os.environ.get(
+    "INFISICAL_K8S_HOST", "https://kubernetes.default.svc.cluster.local"
+)
+# CA cert + a long-lived reviewer JWT for a dedicated infisical-token-reviewer SA
+# bound to system:auth-delegator (gitops-cluster-dev/10-crds-operators/
+# infisical-secretstore-operator/token-reviewer-rbac.yaml) - required so Infisical's
+# own backend can call this cluster's TokenReview API to validate a presented SA
+# token. Both sourced from that same SA's long-lived token Secret (its `ca.crt` key
+# happens to be this cluster's real CA, auto-populated by the control plane - no
+# separate CA source needed).
+#
+# Optional, not required, at module level - unlike INFISICAL_API_URL/ADMIN_TOKEN.
+# spec.authMethod (see reconcile()) determines per-InfisicalProject whether these are
+# ever actually used: this same operator image also runs on upper-env clusters
+# (authMethod: universal there, always - see SecretStore Composition's cluster-
+# registry check), which have no reason to carry Kubernetes-Auth config for a
+# cluster's own TokenReview API that's never called. configure_kubernetes_auth()
+# fails loudly if called with these unset, rather than failing at import time on a
+# cluster that legitimately never needs them.
+K8S_CA_CERT = os.environ.get("INFISICAL_K8S_CA_CERT")
+K8S_TOKEN_REVIEWER_JWT = os.environ.get("INFISICAL_K8S_TOKEN_REVIEWER_JWT")
+# The identity actually being verified on every login is NOT anything app-specific -
+# it's ESO's own controller pod's SA token (see configure_kubernetes_auth()'s
+# docstring for why). Confirmed live against kind-dev, not assumed: `kubectl get
+# deploy -n external-secrets -o jsonpath='{.spec.template.spec.serviceAccountName}'`
+# for the actual controller Deployment (not external-secrets-cert-controller or
+# external-secrets-webhook, both separate SAs in the same chart) returned
+# `external-secrets` in ns `external-secrets` - the chart's fullname-collapses-to-
+# release-name default, same shape confirmed for the release itself.
+ESO_SA_NAMESPACE = os.environ.get("ESO_SERVICEACCOUNT_NAMESPACE", "external-secrets")
+ESO_SA_NAME = os.environ.get("ESO_SERVICEACCOUNT_NAME", "external-secrets")
+
 _session = requests.Session()
 _session.headers.update({
     "Authorization": f"Bearer {ADMIN_TOKEN}",
@@ -47,8 +95,10 @@ def slugify(name: str) -> str:
     return s[:64]
 
 
-def _req(method: str, path: str, **kwargs) -> dict:
+def _req(method: str, path: str, not_found_ok: bool = False, **kwargs) -> dict | None:
     resp = _session.request(method, f"{INFISICAL_API_URL}{path}", timeout=15, **kwargs)
+    if not_found_ok and resp.status_code == 404:
+        return None
     if not resp.ok:
         raise kopf.TemporaryError(
             f"{method} {path} -> {resp.status_code}: {resp.text[:500]}", delay=15
@@ -124,49 +174,145 @@ def create_identity(org_id: str, name: str) -> dict:
     return _req("POST", "/api/v1/identities", json=body)["identity"]
 
 
-def attach_universal_auth(identity_id: str) -> str:
-    resp = _req("POST", f"/api/v1/auth/universal-auth/identities/{identity_id}", json={})
-    return resp["identityUniversalAuth"]["clientId"]
+def configure_kubernetes_auth(identity_id: str):
+    """
+    Idempotent, safe to call on every reconcile (unlike the old Universal Auth
+    flow this replaced) - GET-then-POST/PATCH, same shape as ensure_project_membership.
+    No client secret is ever minted or persisted: the credential Infisical verifies
+    on every login is whatever SA token ESO's own controller presents (its own
+    in-pod projected token by default - see the ClusterSecretStore template's
+    auth.kubernetesAuthCredentials, which deliberately leaves serviceAccountTokenPath
+    unset). allowedNamespaces/allowedNames are therefore ESO's OWN identity
+    (ESO_SA_NAMESPACE/ESO_SA_NAME), not this project's namespace - every InfisicalProject
+    across every app gets the same two constants here. Per-app isolation still comes
+    from Infisical's own project membership (this identity is only ever added to its
+    one project, below) and from the ClusterSecretStore's own namespaceRegexes
+    condition, exactly as it did under Universal Auth - swapping the auth *method*
+    doesn't change who's allowed to reach which project.
+
+    Every field name and the GET-returns-tokenReviewerJwt-back behavior confirmed
+    against Infisical's real OpenAPI spec (app.infisical.com/api/docs/json,
+    /api/v1/auth/kubernetes-auth/identities/{identityId}), same standard this whole
+    client was already held to - not guessed from a docs page.
+    """
+    body = {
+        "kubernetesHost": K8S_HOST,
+        "caCert": K8S_CA_CERT,
+        "verifyTlsCertificate": True,
+        "tokenReviewerJwt": K8S_TOKEN_REVIEWER_JWT,
+        "tokenReviewMode": "api",  # not "gateway" - Enterprise-only, and unneeded: Infisical
+        # and every workload calling it are always on this same cluster by construction.
+        "allowedNamespaces": ESO_SA_NAMESPACE,
+        "allowedNames": ESO_SA_NAME,
+        "allowedAudience": "",
+    }
+    if not (K8S_CA_CERT and K8S_TOKEN_REVIEWER_JWT):
+        raise kopf.PermanentError(
+            "authMethod: kubernetes but INFISICAL_K8S_CA_CERT/INFISICAL_K8S_TOKEN_REVIEWER_JWT "
+            "aren't set on this operator instance - see token-reviewer-rbac.yaml. Real "
+            "misconfiguration, not a transient error (this cluster's Deployment doesn't carry "
+            "these), not something a retry would fix."
+        )
+    existing = _req(
+        "GET", f"/api/v1/auth/kubernetes-auth/identities/{identity_id}", not_found_ok=True
+    )
+    method = "PATCH" if existing else "POST"
+    _req(method, f"/api/v1/auth/kubernetes-auth/identities/{identity_id}", json=body)
 
 
-def create_client_secret(identity_id: str, description: str) -> str:
-    body = {"description": description, "numUsesLimit": 0, "ttl": 0}
-    resp = _req(
+def configure_universal_auth(identity_id: str) -> dict | None:
+    """
+    Universal Auth's counterpart to configure_kubernetes_auth() - used instead on
+    upper-env clusters (SecretStore Composition sets spec.authMethod: universal
+    there), where Kubernetes Auth can't work: Infisical only runs on kind-dev, and
+    validating a token via Kubernetes Auth means Infisical calling TokenReview
+    against the SAME cluster the token came from - a cross-cluster call Infisical CE
+    can only do via Gateway mode, which is Enterprise-only. Decided explicitly, not a
+    fallback of convenience - see idp/docs/service-catalog-design.md Item 8's
+    multi-cluster revision for the real tradeoff (this reintroduces a persisted
+    clientId/clientSecret for upper-env identities specifically).
+
+    Attaching Universal Auth itself IS idempotent (confirmed against the real OpenAPI
+    spec: GET returns clientId but never clientSecret, safe to re-run) - unlike
+    minting a client secret, which is NOT: Infisical shows a client secret's value
+    exactly once, ever. Returns the newly-minted secret value only when a secret was
+    actually just minted (this identity had no Universal Auth attached yet before
+    this call) - None otherwise, meaning "already configured, nothing new to write."
+    Same accepted gap as this operator has always had here: a resumed reconcile that
+    finds Universal Auth already attached but a missing/deleted credentials Secret
+    can't recover the old secret value - needs a manual delete-and-recreate. Real,
+    not hidden - see this operator's README.
+    """
+    existing = _req(
+        "GET", f"/api/v1/auth/universal-auth/identities/{identity_id}", not_found_ok=True
+    )
+    if existing:
+        return None
+    attach_resp = _req(
+        "POST", f"/api/v1/auth/universal-auth/identities/{identity_id}", json={}
+    )
+    client_id = attach_resp["identityUniversalAuth"]["clientId"]
+    secret_resp = _req(
         "POST",
         f"/api/v1/auth/universal-auth/identities/{identity_id}/client-secrets",
-        json=body,
+        json={"description": "SecretStore XRD", "numUsesLimit": 0, "ttl": 0},
     )
-    return resp["clientSecret"]
+    return {"clientId": client_id, "clientSecret": secret_resp["clientSecret"]}
 
 
 def ensure_project_membership(project_id: str, identity_id: str, role: str = "admin"):
-    # Idempotent by design on Infisical's side - re-adding an existing member with
-    # the same role is a harmless no-op, confirmed against the endpoint's own schema
-    # (no uniqueness error documented for a repeat call), so no pre-check needed here
-    # unlike project/identity creation, which really do create duplicates on retry.
-    _req(
-        "POST",
-        f"/api/v1/projects/{project_id}/memberships/identities/{identity_id}",
+    # NOT idempotent on Infisical's side, actually - the assumption this endpoint's
+    # schema implied a harmless repeat-call no-op was wrong, caught live the first
+    # time this code path ever ran against a real instance: a second POST for an
+    # already-added identity returns a real 400 ("Identity is already a member"),
+    # not a silent no-op. Retried on every reconcile anyway (ensures a role change
+    # would apply - not exercised yet, but cheap either way), so this just tolerates
+    # that one specific, expected error instead of treating it as a real failure.
+    resp = _session.post(
+        f"{INFISICAL_API_URL}/api/v1/projects/{project_id}/memberships/identities/{identity_id}",
         json={"role": role},
+        timeout=15,
+    )
+    if resp.ok or (resp.status_code == 400 and "already a member" in resp.text):
+        return
+    raise kopf.TemporaryError(
+        f"POST .../memberships/identities/{identity_id} -> {resp.status_code}: {resp.text[:500]}",
+        delay=15,
     )
 
 
 def delete_project(project_id: str, logger):
+    # json={} (not no-body) - required, caught live: _session sends
+    # Content-Type: application/json on every request (module-level default), and a
+    # DELETE with that header but a truly empty body makes Infisical's Fastify
+    # backend reject it (FST_ERR_CTP_EMPTY_JSON_BODY) - surfaced to this client as an
+    # unhelpful generic 500, not the 400 Fastify's own error actually was. This
+    # on_delete handler's own try/except already made the symptom invisible
+    # (orphaned project, no reconcile error) - only caught by checking Infisical's
+    # own project list after a real delete, not from operator logs alone.
     try:
-        _req("DELETE", f"/api/v1/projects/{project_id}")
+        _req("DELETE", f"/api/v1/projects/{project_id}", json={})
     except kopf.TemporaryError as e:
         logger.warning("delete_project(%s) failed, continuing: %s", project_id, e)
 
 
 def delete_identity(identity_id: str, logger):
     try:
-        _req("DELETE", f"/api/v1/identities/{identity_id}")
+        _req("DELETE", f"/api/v1/identities/{identity_id}", json={})
     except kopf.TemporaryError as e:
         logger.warning("delete_identity(%s) failed, continuing: %s", identity_id, e)
 
 
-def write_credentials_secret(namespace: str, secret_name: str, client_id: str,
-                              client_secret: str, owner: dict):
+def write_credentials_secret(namespace: str, secret_name: str, string_data: dict, owner: dict):
+    # Kubernetes-Auth mode: {"identityId": ...} only - not a credential in its own
+    # right, an opaque non-secret UUID; nothing that reads this Secret can
+    # authenticate as this identity with it alone (that requires presenting ESO's own
+    # SA token, which this Secret says nothing about). Written on every reconcile,
+    # idempotent (identityId never changes once assigned).
+    #
+    # Universal-Auth mode: {"clientId": ..., "clientSecret": ...} - a REAL credential,
+    # written exactly once (only when configure_universal_auth() actually minted a new
+    # one - see that function's docstring for why a repeat write isn't possible).
     v1 = k8s_client.CoreV1Api()
     body = k8s_client.V1Secret(
         metadata=k8s_client.V1ObjectMeta(
@@ -174,7 +320,7 @@ def write_credentials_secret(namespace: str, secret_name: str, client_id: str,
             namespace=namespace,
             owner_references=[owner],
         ),
-        string_data={"clientId": client_id, "clientSecret": client_secret},
+        string_data=string_data,
     )
     try:
         v1.create_namespaced_secret(namespace, body)
@@ -231,8 +377,7 @@ def reconcile(spec: dict, status: dict, meta: dict, namespace: str, name: str,
 
     identity_name = f"secretstore-{project_slug}"
     identity = find_identity_by_name(org_id, identity_name)
-    new_identity = identity is None
-    if new_identity:
+    if identity is None:
         logger.info("Creating machine identity %s", identity_name)
         identity = create_identity(org_id, identity_name)
     identity_id = identity["id"]
@@ -240,19 +385,27 @@ def reconcile(spec: dict, status: dict, meta: dict, namespace: str, name: str,
 
     ensure_project_membership(project_id, identity_id, role="admin")
 
-    if new_identity:
-        # Only the very first creation gets a client_id/client_secret pair minted -
-        # attach_universal_auth + create_client_secret are NOT safe to re-run on an
-        # already-configured identity (the secret is shown once, generating a second
-        # one would orphan whatever's already sitting in credentialsSecretName without
-        # ever updating it - not attempted here). A resumed/retried reconcile that
-        # finds an existing identity but a missing/deleted credentials Secret is a
-        # real gap, not solved by this first pass - see this operator's README.
-        client_id = attach_universal_auth(identity_id)
-        client_secret = create_client_secret(identity_id, description=f"SecretStore XRD, {project_slug}")
-        write_credentials_secret(namespace, secret_name, client_id, client_secret, owner)
+    # authMethod is required, set by the SecretStore Composition from a cluster-
+    # registry lookup - never a developer-facing choice (same "app owner never
+    # touches cluster config" instinct as everything else gated by that registry).
+    # "kubernetes": fully idempotent every reconcile, closes the old Universal-Auth
+    # flow's known gap (resumed reconcile, existing identity, missing credentials
+    # Secret) for free - this just re-derives and re-writes it.
+    # "universal": NOT fully closed - see configure_universal_auth()'s own docstring
+    # for why a client secret can't be idempotently re-derived the same way.
+    auth_method = spec["authMethod"]
+    if auth_method == "kubernetes":
+        configure_kubernetes_auth(identity_id)
+        write_credentials_secret(namespace, secret_name, {"identityId": identity_id}, owner)
+    elif auth_method == "universal":
+        new_creds = configure_universal_auth(identity_id)
+        if new_creds:
+            write_credentials_secret(namespace, secret_name, new_creds, owner)
+    else:
+        raise kopf.PermanentError(f"spec.authMethod must be 'kubernetes' or 'universal', got {auth_method!r}")
 
     patch.status["credentialsSecretName"] = secret_name
+    patch.status["authMethod"] = auth_method
     patch.status["phase"] = "Ready"
     patch.status["message"] = f"project={project['slug']} environment={env['slug']}"
 
@@ -270,6 +423,69 @@ def on_delete(status: dict, logger, **_):
     # The credentials Secret is not deleted here - it carries an ownerReference back
     # to this CR (see write_credentials_secret), so Kubernetes' own GC removes it,
     # same as every other composed-resource cleanup in this catalog.
+
+
+# InfisicalEnvironment (secrets.idp.io/v1alpha1) - a second, deliberately thin CRD
+# this same operator also reconciles. Ensures ONE additional environment exists
+# inside an ALREADY-existing project (created by some other InfisicalProject CR,
+# never this one) - never creates a project or an identity itself. Exists because one
+# InfisicalProject == one project + one identity + one "shared" environment, but
+# Option 2 (idp/docs/service-catalog-design.md Item 8's multi-cluster revision) needs
+# N additional environments in that SAME project, one per ApplicationEnvironment on
+# an upper cluster - rendered by idp-application's own attached/secretstore.yaml,
+# alongside a per-env ClusterSecretStore pointed at this environment's slug.
+ENV_PLURAL = "infisicalenvironments"
+
+
+def delete_environment(project_id: str, environment_id: str, logger):
+    try:
+        _req(
+            "DELETE", f"/api/v1/projects/{project_id}/environments/{environment_id}",
+            json={},
+        )
+    except kopf.TemporaryError as e:
+        logger.warning(
+            "delete_environment(%s, %s) failed, continuing: %s", project_id, environment_id, e
+        )
+
+
+@kopf.on.create(API_GROUP, API_VERSION, ENV_PLURAL)
+@kopf.on.resume(API_GROUP, API_VERSION, ENV_PLURAL)
+def reconcile_environment(spec: dict, patch: kopf.Patch, logger, **_):
+    project_slug = spec["projectSlug"]
+    env_slug = spec["environmentSlug"]
+
+    project = find_project_by_slug(project_slug)
+    if project is None:
+        # Real wait, not a failure - the owning InfisicalProject (rendered by the
+        # SAME chart release, or an earlier one for this app/cluster) may not have
+        # reconciled yet. Same eventual-consistency shape as the credentials Secret
+        # not existing yet on a SecretStore's very first reconcile.
+        raise kopf.TemporaryError(
+            f"Infisical project '{project_slug}' not found yet - waiting for its "
+            f"owning InfisicalProject", delay=15,
+        )
+    project_id = project["id"]
+    env = ensure_environment(project_id, env_slug)
+
+    patch.status["projectId"] = project_id
+    patch.status["environmentId"] = env["id"]
+    patch.status["phase"] = "Ready"
+    patch.status["message"] = f"project={project_slug} environment={env['slug']}"
+
+
+@kopf.on.delete(API_GROUP, API_VERSION, ENV_PLURAL)
+def on_delete_environment(status: dict, logger, **_):
+    project_id = status.get("projectId")
+    environment_id = status.get("environmentId")
+    # Deletes only this ONE environment, never the project - a sibling
+    # ApplicationEnvironment's own InfisicalEnvironment (or the "shared" one) may
+    # still need it. The owning InfisicalProject's own on_delete (above) is what
+    # tears down the whole project, once every env - and every app namespace on this
+    # (app, cluster) - is gone.
+    if project_id and environment_id:
+        logger.info("Deleting Infisical environment %s from project %s", environment_id, project_id)
+        delete_environment(project_id, environment_id, logger)
 
 
 # No __main__ block - run via `kopf run operator.py`, which loads the in-cluster

@@ -48,38 +48,69 @@ spec:
             # (neither existed before this Composition needed them).
             #
             # spec.provider.infisical schema (inside the wrapped manifest) confirmed against
-            # ESO's own vendored CRD (10-crds-operators/external-secrets/, chart pin 2.8.0 -
-            # the exact provider block shape, incl.
-            # secretsScope.{projectSlug,environmentSlug,secretsPath} and
-            # auth.universalAuthCredentials.{clientId,clientSecret} as SecretKeySelectors, was
-            # checked directly against the vendored CRD source, not assumed from docs).
+            # ESO's real upstream Go source (apis/externalsecrets/v1/secretsstore_infisical_types.go),
+            # not the vendored CRD's own docs comments - auth.kubernetesAuthCredentials.identityId
+            # is a SecretKeySelector (same shape as universalAuthCredentials was), and the
+            # optional serviceAccountTokenPath field is deliberately left unset below: confirmed
+            # against providers/v1/infisical/provider.go that an unset value makes ESO's
+            # controller present ITS OWN in-pod projected SA token to Infisical's login, not
+            # read anything from a Secret - the actual zero-persisted-credential mechanism, not
+            # just a marketing claim.
             #
             # hostAPI points at this cluster's own in-cluster Infisical Service - the default
             # (https://app.infisical.com/api) is Infisical's SaaS, wrong for a self-hosted
-            # on-prem instance. clientId/clientSecret reference the credentials Secret
-            # InfisicalProject's operator writes (same namespace as this XR, hence this app's
-            # own namespace - see infisicalproject.yaml's credentialsSecretName) - that Secret
-            # doesn't exist yet on this store's very first reconcile (the operator writes it
-            # asynchronously, seconds after the InfisicalProject CR appears) - not a problem,
-            # same eventual-consistency shape as any other not-yet-ready secretKeyRef; ESO's
-            # own controller reports Ready:False until it resolves, then self-heals, no
-            # ordering/wait logic needed in this Composition.
+            # on-prem instance. identityId references the credentials Secret InfisicalProject's
+            # operator writes (same namespace as this XR, hence this app's own namespace - see
+            # infisicalproject.yaml's credentialsSecretName) - that Secret doesn't exist yet on
+            # this store's very first reconcile (the operator writes it asynchronously, seconds
+            # after the InfisicalProject CR appears) - not a problem, same eventual-consistency
+            # shape as any other not-yet-ready secretKeyRef; ESO's own controller reports
+            # Ready:False until it resolves, then self-heals, no ordering/wait logic needed in
+            # this Composition. Unlike the old universalAuthCredentials.clientSecret, what's in
+            # that Secret (identityId) isn't itself sensitive - see infisicalproject.yaml's own
+            # credentialsSecretName description for why.
             #
             # spec.conditions.namespaceRegexes restricts this store to exactly this app's own
             # namespaces on this cluster (item 8's resolved scope: "cluster-scoped" doesn't mean
             # "visible to every app") - app-<appName>-<env>, this catalog's live-confirmed
             # namespace convention (kind-dev: app-checkout-api-dev, app-widget-api-dev; kind-prod:
             # app-checkout-api-prod - checked directly via `kubectl get ns`, not assumed).
+            #
+            # ONLY rendered in "shared" mode (environmentSlug == "shared") - the wide-open store
+            # covering every env namespace for this (app, cluster) pair. See
+            # per-env-secretstore.yaml for the narrowed, per-env sibling.
+            #
+            # $projectSlug computed from spec fields, not this XR's own name - see
+            # infisicalproject.yaml's header for why. This store's own object NAME is also
+            # $projectSlug (not $xrName) - deliberate: a per-env XR (per-env-secretstore.yaml)
+            # computes and creates ITS OWN differently-named ClusterSecretStore, and the two
+            # must never collide.
+            #
+            # hostAPI/authMethod both branch on spec.cluster - see infisicalproject.yaml's own
+            # header for why this is a plain string comparison, not an ExtraResources lookup.
+            # The kind-dev branch is this cluster's own in-cluster Service DNS (Infisical and
+            # every workload calling it are the same cluster there). The non-kind-dev branch is
+            # a real, live-verified NodePort address (infisical-nodeport.yaml, same directory as
+            # this operator's other deploy manifests) - a kind-cluster-local-sandbox stand-in for
+            # what a real routable endpoint would be between genuinely separate clusters; flagged
+            # there, not repeated here.
             <<- $spec := .observed.composite.resource.spec >>
-            <<- $xrName := .observed.composite.resource.metadata.name >>
             <<- $xrNamespace := .observed.composite.resource.metadata.namespace >>
             <<- $appName := $spec.appRef.name >>
             <<- $envSlug := $spec.environmentSlug | default "shared" >>
-            <<- $credsSecretName := printf "%s-infisical-creds" $xrName >>
+            <<- $projectSlug := printf "%s-%s" $appName $spec.cluster >>
+            <<- $credsSecretName := printf "%s-infisical-creds" $projectSlug >>
+            <<- $hostAPI := "http://10.89.0.2:31800/api" >>
+            <<- $authMethod := "universal" >>
+            <<- if eq $spec.cluster "kind-dev" >>
+              <<- $hostAPI = "http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080/api" >>
+              <<- $authMethod = "kubernetes" >>
+            <<- end >>
+            <<- if eq $envSlug "shared" >>
             apiVersion: kubernetes.m.crossplane.io/v1alpha1
             kind: Object
             metadata:
-              name: <<$xrName>>
+              name: <<$projectSlug>>
               annotations:
                 <<setResourceNameAnnotation "cluster-secret-store">>
             spec:
@@ -88,15 +119,24 @@ spec:
                   apiVersion: external-secrets.io/v1
                   kind: ClusterSecretStore
                   metadata:
-                    name: <<$xrName>>
+                    name: <<$projectSlug>>
                   spec:
                     conditions:
                       - namespaceRegexes:
                           - <<printf "^app-%s-.*$" $appName | toJson>>
                     provider:
                       infisical:
-                        hostAPI: "http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080/api"
+                        hostAPI: <<$hostAPI | toJson>>
                         auth:
+                          <<- if eq $authMethod "kubernetes" >>
+                          kubernetesAuthCredentials:
+                            identityId:
+                              name: <<$credsSecretName>>
+                              namespace: <<$xrNamespace>>
+                              key: identityId
+                            # serviceAccountTokenPath deliberately omitted - see this file's
+                            # header. ESO presents its own controller SA token, not a stored one.
+                          <<- else >>
                           universalAuthCredentials:
                             clientId:
                               name: <<$credsSecretName>>
@@ -106,11 +146,13 @@ spec:
                               name: <<$credsSecretName>>
                               namespace: <<$xrNamespace>>
                               key: clientSecret
+                          <<- end >>
                         secretsScope:
-                          projectSlug: <<$xrName>>
-                          environmentSlug: <<$envSlug>>
+                          projectSlug: <<$projectSlug>>
+                          environmentSlug: shared
                           secretsPath: "/"
               managementPolicies: ["*"]
+            <<- end >>
             ---
             ---
             # Rendered by function-go-templating (source: Inline, see composition.yaml/
@@ -124,24 +166,144 @@ spec:
             # scans raw text for the pair regardless of YAML comment syntax, and an accidental
             # empty action fails the whole render (hit this live building this exact file).
             #
-            # $xrName doubles as BOTH the Infisical project slug and this InfisicalProject CR's
-            # own name - deliberate, see xrds/secretstore.yaml's header. No ExtraResources
-            # lookup needed: every value below is knowable from this XR's own spec/name on the
-            # very first reconcile.
+            # ONLY rendered in "shared" mode (environmentSlug == "shared", the default) - a
+            # non-"shared" XR references this project by its own computed $projectSlug (below)
+            # but never creates one; see per-env-secretstore.yaml for that mode.
+            #
+            # $projectSlug is computed from spec fields (appRef.name + cluster), NOT from this
+            # XR's own metadata.name - a deliberate change from this XRD's first pass (which
+            # used $xrName directly, back when only one XR ever existed per (app,cluster)). Both
+            # modes now need the SAME formula so a per-env XR (a DIFFERENT k8s object, DIFFERENT
+            # name) can compute the identical project slug its "shared" sibling already created,
+            # with no ExtraResources lookup needed either way.
+            #
+            # authMethod: a plain string comparison on spec.cluster, not an ExtraResources
+            # cluster-registry lookup like ApplicationEnvironment's gate uses - deliberately
+            # different, not an inconsistency. The registry gate checks LIVE readiness state
+            # (crossplaneReady) that can change over time and must be re-checked every
+            # reconcile; which cluster hosts Infisical is a static topology fact (today: only
+            # ever kind-dev), matching this catalog's existing convention of hardcoding
+            # "kind-dev" as a literal pending real multi-dev-cluster support (e.g.
+            # tenant-onboarding/lower-envs-applicationset.yaml's own cluster: kind-dev). See
+            # idp/docs/service-catalog-design.md Item 8's multi-cluster revision for the real
+            # reasoning (Kubernetes Auth needs Infisical and the workload on the SAME cluster;
+            # Infisical only runs on kind-dev, so every OTHER cluster needs Universal Auth
+            # instead - Gateway mode, the alternative, is Enterprise-only).
             <<- $spec := .observed.composite.resource.spec >>
-            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $appName := $spec.appRef.name >>
             <<- $envSlug := $spec.environmentSlug | default "shared" >>
+            <<- $projectSlug := printf "%s-%s" $appName $spec.cluster >>
+            <<- $authMethod := "universal" >>
+            <<- if eq $spec.cluster "kind-dev" >>
+              <<- $authMethod = "kubernetes" >>
+            <<- end >>
+            <<- if eq $envSlug "shared" >>
             apiVersion: secrets.idp.io/v1alpha1
             kind: InfisicalProject
             metadata:
-              name: <<$xrName>>
+              name: <<$projectSlug>>
               annotations:
                 <<setResourceNameAnnotation "infisical-project">>
             spec:
-              projectName: <<$xrName>>
-              slug: <<$xrName>>
+              projectName: <<$projectSlug>>
+              slug: <<$projectSlug>>
+              environmentSlug: shared
+              credentialsSecretName: <<printf "%s-infisical-creds" $projectSlug>>
+              authMethod: <<$authMethod>>
+            <<- end >>
+            ---
+            ---
+            # ONLY rendered in per-env mode (environmentSlug != "shared"). Does NOT create a
+            # project - references the ALREADY-existing one from this (app, cluster) pair's
+            # "shared" XR via the SAME computed $projectSlug formula (infisicalproject.yaml's
+            # header) - no ExtraResources lookup needed, since idp-application's own
+            # attached/secretstore.yaml always renders the "shared" XR alongside any per-env one,
+            # in the SAME chart release, same namespace. If the "shared" XR's own InfisicalProject
+            # hasn't finished creating that project yet, InfisicalEnvironment's own reconcile
+            # below just waits (TemporaryError) - the same eventual-consistency shape every other
+            # not-yet-ready reference in this catalog already uses, no ordering logic needed here.
+            #
+            # InfisicalEnvironment (a second CRD this same operator reconciles,
+            # secrets.idp.io/v1alpha1 - see its own CRD file's header) just ensures ONE
+            # additional environment exists in that project. The credentials Secret this store's
+            # auth block references is the SAME one the "shared" XR's InfisicalProject wrote -
+            # both XRs live in the same namespace (idp-application's own convention: this chart
+            # renders every SecretStore-family XR for one (app, cluster) pair into one dedicated
+            # namespace - see that chart's own attached/secretstore.yaml), so a same-namespace
+            # secretKeyRef is correct without this Composition needing to know that convention
+            # by name.
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $xrNamespace := .observed.composite.resource.metadata.namespace >>
+            <<- $appName := $spec.appRef.name >>
+            <<- $envSlug := $spec.environmentSlug | default "shared" >>
+            <<- $projectSlug := printf "%s-%s" $appName $spec.cluster >>
+            <<- $credsSecretName := printf "%s-infisical-creds" $projectSlug >>
+            <<- $hostAPI := "http://10.89.0.2:31800/api" >>
+            <<- $authMethod := "universal" >>
+            <<- if eq $spec.cluster "kind-dev" >>
+              <<- $hostAPI = "http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080/api" >>
+              <<- $authMethod = "kubernetes" >>
+            <<- end >>
+            <<- if ne $envSlug "shared" >>
+            apiVersion: secrets.idp.io/v1alpha1
+            kind: InfisicalEnvironment
+            metadata:
+              name: <<$xrName>>
+              annotations:
+                <<setResourceNameAnnotation "infisical-environment">>
+            spec:
+              projectSlug: <<$projectSlug>>
               environmentSlug: <<$envSlug>>
-              credentialsSecretName: <<printf "%s-infisical-creds" $xrName>>
+            ---
+            apiVersion: kubernetes.m.crossplane.io/v1alpha1
+            kind: Object
+            metadata:
+              name: <<$xrName>>
+              annotations:
+                <<setResourceNameAnnotation "per-env-cluster-secret-store">>
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ClusterSecretStore
+                  metadata:
+                    name: <<$xrName>>
+                  spec:
+                    conditions:
+                      # Narrowed to exactly ONE namespace (not the "shared" store's wildcard) -
+                      # the real per-env isolation this mode exists for: an ExternalSecret
+                      # anywhere else can't even resolve this store, regardless of what its own
+                      # remoteRef says.
+                      - namespaceRegexes:
+                          - <<printf "^app-%s-%s$" $appName $envSlug | toJson>>
+                    provider:
+                      infisical:
+                        hostAPI: <<$hostAPI | toJson>>
+                        auth:
+                          <<- if eq $authMethod "kubernetes" >>
+                          kubernetesAuthCredentials:
+                            identityId:
+                              name: <<$credsSecretName>>
+                              namespace: <<$xrNamespace>>
+                              key: identityId
+                          <<- else >>
+                          universalAuthCredentials:
+                            clientId:
+                              name: <<$credsSecretName>>
+                              namespace: <<$xrNamespace>>
+                              key: clientId
+                            clientSecret:
+                              name: <<$credsSecretName>>
+                              namespace: <<$xrNamespace>>
+                              key: clientSecret
+                          <<- end >>
+                        secretsScope:
+                          projectSlug: <<$projectSlug>>
+                          environmentSlug: <<$envSlug>>
+                          secretsPath: "/"
+              managementPolicies: ["*"]
+            <<- end >>
             ---
             ---
         delims:

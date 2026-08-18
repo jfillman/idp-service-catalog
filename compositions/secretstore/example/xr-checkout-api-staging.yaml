@@ -1,0 +1,10 @@
+apiVersion: catalog.idp.io/v1alpha1
+kind: SecretStore
+metadata:
+  name: checkout-api-kind-prod-staging
+  namespace: app-checkout-api-secrets
+spec:
+  appRef:
+    name: checkout-api
+  cluster: kind-prod
+  environmentSlug: staging

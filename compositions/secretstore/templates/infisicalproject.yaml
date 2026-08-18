@@ -9,22 +9,49 @@
 # scans raw text for the pair regardless of YAML comment syntax, and an accidental
 # empty action fails the whole render (hit this live building this exact file).
 #
-# $xrName doubles as BOTH the Infisical project slug and this InfisicalProject CR's
-# own name - deliberate, see xrds/secretstore.yaml's header. No ExtraResources
-# lookup needed: every value below is knowable from this XR's own spec/name on the
-# very first reconcile.
+# ONLY rendered in "shared" mode (environmentSlug == "shared", the default) - a
+# non-"shared" XR references this project by its own computed $projectSlug (below)
+# but never creates one; see per-env-secretstore.yaml for that mode.
+#
+# $projectSlug is computed from spec fields (appRef.name + cluster), NOT from this
+# XR's own metadata.name - a deliberate change from this XRD's first pass (which
+# used $xrName directly, back when only one XR ever existed per (app,cluster)). Both
+# modes now need the SAME formula so a per-env XR (a DIFFERENT k8s object, DIFFERENT
+# name) can compute the identical project slug its "shared" sibling already created,
+# with no ExtraResources lookup needed either way.
+#
+# authMethod: a plain string comparison on spec.cluster, not an ExtraResources
+# cluster-registry lookup like ApplicationEnvironment's gate uses - deliberately
+# different, not an inconsistency. The registry gate checks LIVE readiness state
+# (crossplaneReady) that can change over time and must be re-checked every
+# reconcile; which cluster hosts Infisical is a static topology fact (today: only
+# ever kind-dev), matching this catalog's existing convention of hardcoding
+# "kind-dev" as a literal pending real multi-dev-cluster support (e.g.
+# tenant-onboarding/lower-envs-applicationset.yaml's own cluster: kind-dev). See
+# idp/docs/service-catalog-design.md Item 8's multi-cluster revision for the real
+# reasoning (Kubernetes Auth needs Infisical and the workload on the SAME cluster;
+# Infisical only runs on kind-dev, so every OTHER cluster needs Universal Auth
+# instead - Gateway mode, the alternative, is Enterprise-only).
 <<- $spec := .observed.composite.resource.spec >>
-<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $appName := $spec.appRef.name >>
 <<- $envSlug := $spec.environmentSlug | default "shared" >>
+<<- $projectSlug := printf "%s-%s" $appName $spec.cluster >>
+<<- $authMethod := "universal" >>
+<<- if eq $spec.cluster "kind-dev" >>
+  <<- $authMethod = "kubernetes" >>
+<<- end >>
+<<- if eq $envSlug "shared" >>
 apiVersion: secrets.idp.io/v1alpha1
 kind: InfisicalProject
 metadata:
-  name: <<$xrName>>
+  name: <<$projectSlug>>
   annotations:
     <<setResourceNameAnnotation "infisical-project">>
 spec:
-  projectName: <<$xrName>>
-  slug: <<$xrName>>
-  environmentSlug: <<$envSlug>>
-  credentialsSecretName: <<printf "%s-infisical-creds" $xrName>>
+  projectName: <<$projectSlug>>
+  slug: <<$projectSlug>>
+  environmentSlug: shared
+  credentialsSecretName: <<printf "%s-infisical-creds" $projectSlug>>
+  authMethod: <<$authMethod>>
+<<- end >>
 ---

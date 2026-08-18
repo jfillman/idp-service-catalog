@@ -23,10 +23,50 @@ cluster-scoped resource directly from this namespaced XR - same fix
 pulled by a real `ExternalSecret` into a real K8s Secret with the correct value.
 Also fixed a real, pre-existing bug this surfaced in `idp-application`'s own
 `ExternalSecret` template (`remoteRef.property` broke every pull against
-Infisical). **Not yet built**: wiring into `ApplicationEnvironment`'s
-auto-provisioning (create-on-first-env, reference on later ones) - this XRD is
-standalone-creatable only for now, same as `SLO` before any Attached-tier
-auto-provisioning existed - separate follow-up.
+Infisical).
+
+**Kubernetes Auth swap + full multi-cluster auto-provisioning (Item 8's
+multi-cluster revision) — done, live-verified end-to-end on both `kind-dev` and
+`kind-prod` 2026-08-17.** Two real, separate builds, same day:
+
+1. Every `InfisicalProject` identity now authenticates via Kubernetes Auth by
+   default (no `clientId`/`clientSecret` minted or persisted anywhere - ESO's own
+   controller SA token, verified live via TokenReview) instead of the original
+   Universal Auth. Four real bugs found and fixed live getting this working the
+   first time: `kubernetesHost` needs the fully-qualified in-cluster DNS name (a raw
+   c-ares query, no search-domain expansion); Infisical's SSRF guard blocks private
+   IPs unless `ALLOW_INTERNAL_IP_CONNECTIONS=true`; `ensure_project_membership` was
+   never actually idempotent (a real 400 on retry, contrary to the original,
+   untested comment); `_session`'s own `Content-Type: application/json` default
+   broke every empty-body `DELETE` call (Fastify rejects it, surfaced as an
+   unhelpful 500).
+2. `SecretStore`'s auto-provisioning (the "Not yet built" item above) is real now,
+   with a real design change along the way: `environmentSlug` (already on the XRD)
+   now has TWO modes - `"shared"` (the default, original behavior) or any other
+   value, which creates ONE additional Infisical environment inside the
+   already-existing project plus a SEPARATE `ClusterSecretStore` narrowed to
+   exactly one namespace - real per-environment isolation (proven live: a
+   correctly-scoped `ExternalSecret` pulls the right value, a wrong-namespace one
+   hard-fails), not a `secretsPath` convention. `idp-application`'s own chart
+   (`templates/attached/secretstore.yaml`, always-on like `NetworkPolicy`) is what
+   actually triggers this now, not `ApplicationEnvironment`'s Composition directly -
+   `ApplicationEnvironment` and `NodeJSApplication` are both `provider-github`-only,
+   neither can create a native resource on any cluster, including kind-dev's own.
+   New `InfisicalEnvironment` CRD (same operator) ensures one environment exists in
+   an already-existing project. Upper-cluster stores (kind-prod) use Universal
+   Auth, not Kubernetes Auth - Infisical only runs on kind-dev, and validating a
+   token from a different cluster needs Gateway mode (Enterprise-only) - a real,
+   deliberate, user-confirmed tradeoff, not an oversight. Proven genuinely
+   cross-cluster, not simulated: a real secret written into Infisical on `kind-dev`,
+   pulled by a real `ExternalSecret` on `kind-prod`, over a live-verified NodePort
+   path (`infisical-nodeport.yaml`) - a kind-cluster-local-sandbox stand-in for a
+   real routable endpoint between genuinely separate clusters, flagged as such, not
+   assumed reusable as-is. One more real bug caught live: Crossplane's own core
+   controller had no RBAC for the new `infisicalenvironments` CRD on either
+   cluster - `native-resources-rbac.yaml` needed extending on both.
+
+See `idp/docs/service-catalog-design.md` Item 8 for the full design writeup and
+`operators/infisical-secretstore-operator/README.md` for the operator-level detail.
 
 **AI-triage mechanism (Phase 2, first slice) — done, live-verified
 2026-08-13.** `functions/function-rollout-watcher` + `functions/diagnosis-holmes-dispatch`:
