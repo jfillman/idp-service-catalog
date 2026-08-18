@@ -22,6 +22,7 @@ See configure_kubernetes_auth()'s docstring for the actual mechanism (ESO's own
 controller SA token, verified live via this cluster's TokenReview API on every
 login - nothing app-facing to steal, rotate, or leak).
 """
+import datetime
 import logging
 import os
 import re
@@ -93,6 +94,27 @@ _session.headers.update({
 def slugify(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     return s[:64]
+
+
+def ready_condition(message: str) -> list[dict]:
+    # The standard Crossplane condition shape (type/status/reason/message/
+    # lastTransitionTime) - not just status.phase, which is this operator's own
+    # convention and invisible to Crossplane. The SecretStore Composition's
+    # function-auto-ready pipeline step only ever looks at
+    # status.conditions[type=Ready].status=="True" on a composed resource to decide
+    # the whole XR is ready; without this, the composite stayed "Creating" forever
+    # even once this operator's own reconcile had actually succeeded (status.phase:
+    # Ready underneath the whole time) - confirmed live against kind-dev's
+    # checkout-api-kind-dev SecretStore XR.
+    return [{
+        "type": "Ready",
+        "status": "True",
+        "reason": "Available",
+        "message": message,
+        "lastTransitionTime": datetime.datetime.now(datetime.timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }]
 
 
 def _req(method: str, path: str, not_found_ok: bool = False, **kwargs) -> dict | None:
@@ -407,7 +429,9 @@ def reconcile(spec: dict, status: dict, meta: dict, namespace: str, name: str,
     patch.status["credentialsSecretName"] = secret_name
     patch.status["authMethod"] = auth_method
     patch.status["phase"] = "Ready"
-    patch.status["message"] = f"project={project['slug']} environment={env['slug']}"
+    message = f"project={project['slug']} environment={env['slug']}"
+    patch.status["message"] = message
+    patch.status["conditions"] = ready_condition(message)
 
 
 @kopf.on.delete(API_GROUP, API_VERSION, PLURAL)
@@ -471,7 +495,9 @@ def reconcile_environment(spec: dict, patch: kopf.Patch, logger, **_):
     patch.status["projectId"] = project_id
     patch.status["environmentId"] = env["id"]
     patch.status["phase"] = "Ready"
-    patch.status["message"] = f"project={project_slug} environment={env['slug']}"
+    message = f"project={project_slug} environment={env['slug']}"
+    patch.status["message"] = message
+    patch.status["conditions"] = ready_condition(message)
 
 
 @kopf.on.delete(API_GROUP, API_VERSION, ENV_PLURAL)

@@ -82,3 +82,25 @@ spec:
                   type: string
                 environmentId:
                   type: string
+                # Same status.conditions addition as InfisicalProject's own CRD -
+                # see that file's header for why function-auto-ready needs this.
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      observedGeneration:
+                        type: integer
+                        format: int64

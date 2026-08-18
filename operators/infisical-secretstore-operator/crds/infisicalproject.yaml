@@ -129,3 +129,31 @@ spec:
                   type: string
                 authMethod:
                   type: string
+                # Standard Crossplane condition shape - required for the SecretStore
+                # Composition's function-auto-ready pipeline step to see this resource
+                # as ready. Without this, the composite XR stays "Creating" forever
+                # even after this operator's own reconcile succeeds (status.phase
+                # alone means nothing to function-auto-ready, which only ever checks
+                # status.conditions[type=Ready].status=="True" - confirmed live,
+                # kind-dev's checkout-api-kind-dev SecretStore stuck at Ready:False
+                # with phase: Ready underneath the whole time).
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      observedGeneration:
+                        type: integer
+                        format: int64

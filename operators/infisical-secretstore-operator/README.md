@@ -126,6 +126,25 @@ json | kubectl apply -f -`, never displayed/pasted anywhere - a real, deliberate
 expansion of that token's blast radius (now valid on two clusters, not one), an
 accepted cost of "one shared Infisical instance" flagged here, not hidden.
 
+## Real bug found and fixed 2026-08-18: reconcile success was invisible to Crossplane
+
+Both CRDs only ever exposed this operator's own `status.phase: Ready` convention.
+The `SecretStore` Composition's `function-auto-ready` pipeline step - same
+mechanism every other Composition in this catalog uses to detect a composed
+resource is ready - only ever checks the standard
+`status.conditions[type=Ready].status=="True"` shape, which neither CRD's schema
+had a field for at all. Every `SecretStore` XR (and anything waiting on one)
+therefore stayed `Creating` forever, even once this operator had actually
+finished provisioning it - confirmed live on both kind-dev and kind-prod, `phase:
+Ready` sitting underneath a composite stuck not-ready indefinitely.
+
+Fixed by adding `status.conditions` to both CRDs (`crds/*.yaml`) and having
+`reconcile()`/`reconcile_environment()` write a real `Ready: True` condition on
+success via the new `ready_condition()` helper. Both CRDs and both cluster
+Deployments (kind-dev, kind-prod) needed the update - not scoped to
+`configure_kubernetes_auth()`, applies to every `InfisicalProject`/
+`InfisicalEnvironment` regardless of `authMethod`.
+
 ## Known gaps (real, not hidden)
 
 - **No image registry / CI pipeline yet** - built locally, `kind load
