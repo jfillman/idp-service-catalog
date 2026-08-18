@@ -1,0 +1,92 @@
+# Seeds this app's tenants/<appName>/identity.yaml on the TARGET cluster's own
+# gitops-cluster-<cluster>-tenants repo - needed because NodeJSApplication only ever
+# writes the devCluster's copy (gitops-cluster-dev-tenants today), but §6 of
+# gitops-strategy.md scopes AppProject per cluster: an app deployed to N clusters
+# needs N independently-generated AppProjects, each built by that cluster's own
+# tenant-appprojects ApplicationSet from that cluster's own identity.yaml. Every
+# ApplicationEnvironment targeting a given (app, cluster) pair writes this
+# unconditionally and idempotently (same overwriteOnCreate: true, deterministic
+# content, no "is this the first one for this cluster" branch needed - matches this
+# catalog's general "redundant-but-harmless idempotent writes over a matrix
+# generator" convention).
+#
+# Renamed from cluster-app-yaml.yaml, content reshaped from flat app.yaml fields to
+# the nested platformIdentity: schema (2026-08-18) - the two files this catalog wrote
+# per app were "almost identical, one a subset of the other," sitting side by side in
+# the same tenants/<app>/ directory on kind-dev (see nodejsapplication's own
+# cicd-identity-yaml.yaml header for the full history, including the real .git-suffix
+# PaC-matching bug that made a naive merge unsafe until the whole system standardized
+# on one no-.git convention). This file is that same consolidation applied to the
+# OTHER cluster this catalog writes a tenant identity file onto - upper-env clusters
+# other than kind-dev, which never got a CICD-identity file at all before now (no
+# platform-cicd instance runs there), only ever this one. Same nested schema as
+# nodejsapplication's identity.yaml everywhere, even though THIS cluster's own
+# tenant-appprojects chart still only reads .platformIdentity.appName/.gitopsRepoUrl
+# today - one shape system-wide beats a leaner-but-different one per cluster, and
+# costs nothing extra to write.
+#
+# appRepoUrl now populated for real (previously omitted - "no consumer at this level,
+# omitted deliberately") - cheap and deterministic to compute from $appName, same
+# reasoning nodejsapplication's own tenant-app-yaml.yaml (since retired) originally
+# gave for including it there: record it now rather than needing a backfill pass
+# across every already-onboarded (app, cluster) pair once a consumer (a lower-env
+# tier or CICD onboarding on this cluster) actually needs it. type: app and
+# catalogNamespace: platform-catalog are the same fixed platform constants
+# nodejsapplication's identity.yaml uses - ApplicationEnvironment, like
+# NodeJSApplication, only ever provisions regular applications.
+#
+# managementPolicies (everything except "Delete") - deliberately different from
+# every other RepositoryFile in this catalog, which get the provider's default
+# (management policies on, "*"/all actions). A real correctness issue found
+# designing this, not discovered live: if this resource were owned 1:1 by whichever
+# ApplicationEnvironment XR happens to compose it, deleting ONE env on a cluster
+# (while a sibling env on that SAME cluster still exists) would delete the cluster's
+# shared identity.yaml out from under it, breaking that cluster's AppProject for the
+# surviving env. Excluding "Delete" means deleting any single env's XR never deletes
+# the cluster's shared identity.yaml - cleaning it up when an app is fully
+# decommissioned from a cluster becomes a deliberate, separate cluster-admin action,
+# not automatic. An accepted, explicitly documented limitation, not silently left
+# looking solved - and it means this rename does NOT retroactively delete any
+# already-written tenants/<app>/app.yaml on a cluster this template already ran
+# against (e.g. checkout-api on kind-prod); that cleanup is the same deliberate,
+# separate action, done once by hand alongside this change.
+#
+# NOT spec.deletionPolicy: Orphan - a real, live gotcha this catalog hadn't hit
+# before. provider-upjet-github v0.19.1's RepositoryFile CRD has no such field at
+# all (confirmed via `kubectl explain repositoryfile.spec` after a real
+# ReconcileError: ".spec.deletionPolicy: field not declared in schema") - this
+# provider version uses the newer ManagementPolicies mechanism exclusively instead,
+# which is Crossplane's real replacement for deletionPolicy generally. Worth
+# checking `kubectl explain` for whichever field a provider version actually
+# supports before assuming the older name still applies.
+#
+# $appName/$cluster/$xrName/$platformOwner/$tenantsRepo/$gitopsRepoUrl/$appRepoUrl all
+# come from 00-cluster-gate.yaml - see that file's header. gitopsRepoUrl/appRepoUrl
+# are bare (no .git suffix) there now, not just here - see this catalog's own
+# cicd-identity-yaml.yaml header for why that convention won, system-wide.
+<<- if $clusterOk >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-cluster-identity-yaml
+  annotations:
+    <<setResourceNameAnnotation "cluster-identity-yaml">>
+spec:
+  managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$tenantsRepo>>
+    file: <<printf "tenants/%s/identity.yaml" $appName>>
+    overwriteOnCreate: true
+    content: |
+      platformIdentity:
+        appName: <<$appName>>
+        type: app
+        gitopsRepoUrl: <<$gitopsRepoUrl>>
+        appRepoUrl: <<$appRepoUrl>>
+        githubOwner: <<$platformOwner>>
+        catalogNamespace: platform-catalog
+    commitMessage: <<printf "Onboard %s to %s: add tenants/%s/identity.yaml" $appName $cluster $appName | toJson>>
+<<- end >>

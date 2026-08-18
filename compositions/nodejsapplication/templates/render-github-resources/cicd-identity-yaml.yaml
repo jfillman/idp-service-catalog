@@ -1,42 +1,51 @@
-# Commits tenants/<app-name>/identity.yaml into gitops-cluster-dev-tenants - read by
-# platform-cicd's own tenant-onboarding ApplicationSet (charts/
+# Commits tenants/<app-name>/identity.yaml into gitops-cluster-dev-tenants - the ONE
+# per-app tenant identity file on this cluster (2026-08-18: absorbed app.yaml, which
+# used to sit right next to this file with an overlapping-but-not-identical field set -
+# see "identity.yaml absorbs app.yaml" below). Read by TWO independent ApplicationSets
+# now: platform-cicd's own tenant-onboarding ApplicationSet (charts/
 # platform-cicd-control-plane/templates/argocd/tenant-onboarding-applicationset.yaml,
-# .Values.tenantsRepoUrl, pointed here via hack/values-kind-dev.yaml) to actually stand
-# up this app's CICD pipeline (Tekton/PaC Application, RBAC, Triggers - see
-# platform-cicd/docs/onboarding.md's step 3). This is the real CICD-onboarding-commit
-# step cicd-onboarding-status/status.yaml's own header comment named as still-stubbed -
-# built 2026-08-15 once platform-cicd's control plane actually landed on kind-dev (see
-# idp/docs/service-catalog-design.md's NodeJSApplication note), redirected here from a
+# .Values.tenantsRepoUrl, pointed here via hack/values-kind-dev.yaml) to stand up this
+# app's CICD pipeline (Tekton/PaC Application, RBAC, Triggers - see
+# platform-cicd/docs/onboarding.md's step 3), and idp's own tenant-appprojects
+# ApplicationSet (gitops-cluster-dev/02-argocd-apps/tenant-appprojects/) to build this
+# app's AppProject(s) - previously that second consumer read a separate tenants/<app>/
+# app.yaml, written by this same step (see git history for that file's own last
+# version). This is the real CICD-onboarding-commit step cicd-onboarding-status/
+# status.yaml's own header comment named as still-stubbed - built 2026-08-15 once
+# platform-cicd's control plane actually landed on kind-dev (see idp/docs/
+# service-catalog-design.md's NodeJSApplication note), redirected here from a
 # dedicated platform-cicd-kind-dev-tenants repo 2026-08-16 (see $tenantsRepo below).
 #
-# $platformOwner reused from tenant-app-yaml.yaml in this same step (same platform
-# constant). gitopsRepoUrl/appRepoUrl below are deliberately NOT reused from there,
-# unlike the original design - both are .git-suffixed in tenant-app-yaml.yaml (matching
-# ArgoCD's own repoURL convention, its one confirmed consumer), but platformIdentity's
-# copies feed PaC's Repository CR spec.url, matched via an EXACT string compare
-# (pkg/matcher.MatchEventURLRepo, only trims a trailing slash) against GitHub's actual
-# webhook payload URL - which never has .git. A shared .git-suffixed value here meant
-# PaC could never match a real push for ANY app onboarded through this Composition,
-# confirmed live 2026-08-16 (checkout-api's first real push failed with "cannot find a
-# repository match"). The pre-existing hand-authored kind-observe identity.yaml
-# (platform-cicd/tenants/nodejs-demo-app/identity.yaml) never had .git here either -
-# this restores that convention rather than introducing a new one.
+# identity.yaml absorbs app.yaml (2026-08-18): the two files were "almost identical,
+# one a subset of the other," sitting side by side in the same commit - but NOT
+# byte-for-byte mergeable as-is, because their overlapping gitopsRepoUrl/appRepoUrl
+# fields deliberately held DIFFERENT string values. app.yaml's were .git-suffixed
+# (matching ArgoCD's own repoURL convention); identity.yaml's never were, because PaC
+# matches Repository CR spec.url against GitHub's webhook payload URL with an EXACT
+# string compare (pkg/matcher.MatchEventURLRepo, only trims a trailing slash), and that
+# payload URL never has .git - a shared .git-suffixed value broke PaC matching for
+# every app, confirmed live 2026-08-16 (checkout-api's first real push failed with
+# "cannot find a repository match"). Resolved by standardizing on ONE convention,
+# system-wide: no .git suffix anywhere (this file's own values were already correct;
+# ArgoCD's side is the one that changed - see gitops-cluster-dev's tenant-appprojects
+# ApplicationSet for why dropping .git there is safe, ArgoCD normalizes it away when
+# matching sourceRepos/repoURL, confirmed live during this same change). The
+# pre-existing hand-authored kind-observe identity.yaml (platform-cicd/tenants/
+# nodejs-demo-app/identity.yaml) never had .git here either - this restores that
+# convention rather than introducing a new one.
 #
-# $tenantsRepo (2026-08-16, redirected): gitops-cluster-dev-tenants - the SAME repo
-# tenant-app-yaml.yaml already writes app.yaml into, in this same commit. Previously a
+# $tenantsRepo (2026-08-16, redirected): gitops-cluster-dev-tenants - previously a
 # dedicated platform-cicd-kind-dev-tenants repo, eliminated once live history showed it
 # only ever held throwaway verification apps and both platform-cicd/docs/onboarding.md
 # and idp/README.md confirmed kind-dev's platform-cicd instance is idp-exclusive (unlike
 # kind-observe, which hosts real, independent, non-idp tenants and keeps its own
-# platform-cicd.git-relative tenants/ - unaffected by this change). This is a REDIRECT
-# only, not a schema merge: the identity.yaml content below and platform-cicd's own
-# tenant-onboarding-applicationset.yaml template (shared with kind-observe) are both
-# byte-identical to before - only the target repo changed. Confirmed live no AppProject
-# change is needed either: platform-onboarding's sourceRepos already wildcards
-# https://github.com/jfillman/*, and tenantsRepoUrl is only ever a generator input, never
-# gated by sourceRepos at all. This is a Bootstrap-tier XRD, centralized on kind-dev
-# permanently (idp_session_multicluster_architecture), so unlike ApplicationEnvironment's
-# spec.cluster there's still no per-cluster target to parameterize here.
+# platform-cicd.git-relative tenants/ - unaffected by this change). Confirmed live no
+# AppProject change is needed either: platform-onboarding's sourceRepos already
+# wildcards https://github.com/jfillman/*, and tenantsRepoUrl is only ever a generator
+# input, never gated by sourceRepos at all. This is a Bootstrap-tier XRD, centralized on
+# kind-dev permanently (idp_session_multicluster_architecture), so unlike
+# ApplicationEnvironment's spec.cluster there's still no per-cluster target to
+# parameterize here.
 #
 # type: app (not infra) - NodeJSApplication only ever provisions regular applications,
 # never platform-adjacent services, so this is a fixed literal, not a spec field.

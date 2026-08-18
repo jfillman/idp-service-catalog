@@ -27,7 +27,7 @@
 # Dockerfile/.gitignore/README.md - this file is exactly that same category
 # (scaffold once, developer/CI owns it after), just missed when that fix was made
 # since it lives in a different Composition. Deliberately different from THIS
-# Composition's own cluster-app-yaml.yaml, which keeps full management (including
+# Composition's own cluster-identity-yaml.yaml, which keeps full management (including
 # Update) because nothing but the Composition should ever touch that one.
 <<- if $clusterOk >>
 apiVersion: repo.github.m.upbound.io/v1alpha1

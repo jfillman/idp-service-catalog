@@ -50,11 +50,22 @@ spec:
             # false, same "not found yet, retry next reconcile" shape already used for
             # WorkloadDeployed/CicdOnboarded, not a new failure mode.
             #
-            # $clusterOk/$appName/$env/$cluster/$xrName/$gitopsRepoUrl/$tenantsRepo are all
-            # declared once here, not redeclared per file below - Go template variables declared
-            # at this (unindented) scope persist for the rest of this template's execution
-            # across the --- separators, confirmed by this catalog's existing pattern of one big
-            # concatenated template per pipeline step (build-composition.sh).
+            # $clusterOk/$appName/$env/$cluster/$xrName/$gitopsRepoUrl/$appRepoUrl/$tenantsRepo
+            # are all declared once here, not redeclared per file below - Go template variables
+            # declared at this (unindented) scope persist for the rest of this template's
+            # execution across the --- separators, confirmed by this catalog's existing pattern
+            # of one big concatenated template per pipeline step (build-composition.sh).
+            #
+            # gitopsRepoUrl/appRepoUrl are bare (no .git suffix) - changed 2026-08-18, was
+            # .git-suffixed before. See nodejsapplication's own cicd-identity-yaml.yaml header
+            # for the full reasoning: PaC matches a Repository CR's spec.url against GitHub's
+            # webhook payload URL with an exact string compare, and that payload never has .git,
+            # so any .git-suffixed copy of these URLs breaks PaC matching wherever it's used.
+            # ArgoCD's own consumers of these values (tenant-appprojects' AppProject sourceRepos,
+            # the lower-env tier's live repoURL) are expected to tolerate the bare form fine -
+            # ArgoCD normalizes .git away when comparing repo URLs - live-verified as part of
+            # this same change (see gitops-cluster-dev-tenants/README.md's own Status section for
+            # the result), not just assumed from ArgoCD's docs.
             #
             # Deliberately ONE YAML document in this file, not two - $clusterOk is computed from
             # .extraResources (a fixed input available from the start of this template's
@@ -71,7 +82,8 @@ spec:
             <<- $cluster := $spec.cluster >>
             <<- $platformOwner := "jfillman" >>
             <<- $tenantsRepo := printf "gitops-cluster-%s-tenants" $cluster >>
-            <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $appName >>
+            <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s" $platformOwner $appName >>
+            <<- $appRepoUrl := printf "https://github.com/%s/%s" $platformOwner $appName >>
             <<- $allExtra := .extraResources | default dict >>
             <<- $entry := index $allExtra "cluster-registry-entry" | default dict >>
             <<- $items := index $entry "items" | default list >>
@@ -172,17 +184,42 @@ spec:
               reason: <<printf "ApplicationEnvironment %s references NodeJSApplication %s via spec.appName - blocks app deletion until every referencing env is gone (idp/docs/service-catalog-design.md §0)" $xrName $appName | toJson>>
               replayDeletion: true
             ---
-            # Seeds this app's tenants/<appName>/app.yaml on the TARGET cluster's own
+            # Seeds this app's tenants/<appName>/identity.yaml on the TARGET cluster's own
             # gitops-cluster-<cluster>-tenants repo - needed because NodeJSApplication only ever
             # writes the devCluster's copy (gitops-cluster-dev-tenants today), but §6 of
             # gitops-strategy.md scopes AppProject per cluster: an app deployed to N clusters
             # needs N independently-generated AppProjects, each built by that cluster's own
-            # tenant-appprojects ApplicationSet from that cluster's own app.yaml. Every
+            # tenant-appprojects ApplicationSet from that cluster's own identity.yaml. Every
             # ApplicationEnvironment targeting a given (app, cluster) pair writes this
             # unconditionally and idempotently (same overwriteOnCreate: true, deterministic
             # content, no "is this the first one for this cluster" branch needed - matches this
             # catalog's general "redundant-but-harmless idempotent writes over a matrix
             # generator" convention).
+            #
+            # Renamed from cluster-app-yaml.yaml, content reshaped from flat app.yaml fields to
+            # the nested platformIdentity: schema (2026-08-18) - the two files this catalog wrote
+            # per app were "almost identical, one a subset of the other," sitting side by side in
+            # the same tenants/<app>/ directory on kind-dev (see nodejsapplication's own
+            # cicd-identity-yaml.yaml header for the full history, including the real .git-suffix
+            # PaC-matching bug that made a naive merge unsafe until the whole system standardized
+            # on one no-.git convention). This file is that same consolidation applied to the
+            # OTHER cluster this catalog writes a tenant identity file onto - upper-env clusters
+            # other than kind-dev, which never got a CICD-identity file at all before now (no
+            # platform-cicd instance runs there), only ever this one. Same nested schema as
+            # nodejsapplication's identity.yaml everywhere, even though THIS cluster's own
+            # tenant-appprojects chart still only reads .platformIdentity.appName/.gitopsRepoUrl
+            # today - one shape system-wide beats a leaner-but-different one per cluster, and
+            # costs nothing extra to write.
+            #
+            # appRepoUrl now populated for real (previously omitted - "no consumer at this level,
+            # omitted deliberately") - cheap and deterministic to compute from $appName, same
+            # reasoning nodejsapplication's own tenant-app-yaml.yaml (since retired) originally
+            # gave for including it there: record it now rather than needing a backfill pass
+            # across every already-onboarded (app, cluster) pair once a consumer (a lower-env
+            # tier or CICD onboarding on this cluster) actually needs it. type: app and
+            # catalogNamespace: platform-catalog are the same fixed platform constants
+            # nodejsapplication's identity.yaml uses - ApplicationEnvironment, like
+            # NodeJSApplication, only ever provisions regular applications.
             #
             # managementPolicies (everything except "Delete") - deliberately different from
             # every other RepositoryFile in this catalog, which get the provider's default
@@ -190,11 +227,15 @@ spec:
             # designing this, not discovered live: if this resource were owned 1:1 by whichever
             # ApplicationEnvironment XR happens to compose it, deleting ONE env on a cluster
             # (while a sibling env on that SAME cluster still exists) would delete the cluster's
-            # shared app.yaml out from under it, breaking that cluster's AppProject for the
+            # shared identity.yaml out from under it, breaking that cluster's AppProject for the
             # surviving env. Excluding "Delete" means deleting any single env's XR never deletes
-            # the cluster's shared app.yaml - cleaning it up when an app is fully decommissioned
-            # from a cluster becomes a deliberate, separate cluster-admin action, not automatic.
-            # An accepted, explicitly documented limitation, not silently left looking solved.
+            # the cluster's shared identity.yaml - cleaning it up when an app is fully
+            # decommissioned from a cluster becomes a deliberate, separate cluster-admin action,
+            # not automatic. An accepted, explicitly documented limitation, not silently left
+            # looking solved - and it means this rename does NOT retroactively delete any
+            # already-written tenants/<app>/app.yaml on a cluster this template already ran
+            # against (e.g. checkout-api on kind-prod); that cleanup is the same deliberate,
+            # separate action, done once by hand alongside this change.
             #
             # NOT spec.deletionPolicy: Orphan - a real, live gotcha this catalog hadn't hit
             # before. provider-upjet-github v0.19.1's RepositoryFile CRD has no such field at
@@ -205,17 +246,17 @@ spec:
             # checking `kubectl explain` for whichever field a provider version actually
             # supports before assuming the older name still applies.
             #
-            # $appName/$cluster/$xrName/$platformOwner/$tenantsRepo/$gitopsRepoUrl all come from
-            # 00-cluster-gate.yaml - see that file's header. No appRepoUrl consumer at this
-            # level either (same reasoning NodeJSApplication's own app.yaml write already uses)
-            # - omitted here deliberately, not an oversight.
+            # $appName/$cluster/$xrName/$platformOwner/$tenantsRepo/$gitopsRepoUrl/$appRepoUrl all
+            # come from 00-cluster-gate.yaml - see that file's header. gitopsRepoUrl/appRepoUrl
+            # are bare (no .git suffix) there now, not just here - see this catalog's own
+            # cicd-identity-yaml.yaml header for why that convention won, system-wide.
             <<- if $clusterOk >>
             apiVersion: repo.github.m.upbound.io/v1alpha1
             kind: RepositoryFile
             metadata:
-              name: <<$xrName>>-cluster-app-yaml
+              name: <<$xrName>>-cluster-identity-yaml
               annotations:
-                <<setResourceNameAnnotation "cluster-app-yaml">>
+                <<setResourceNameAnnotation "cluster-identity-yaml">>
             spec:
               managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
               providerConfigRef:
@@ -223,13 +264,17 @@ spec:
                 name: default
               forProvider:
                 repository: <<$tenantsRepo>>
-                file: <<printf "tenants/%s/app.yaml" $appName>>
+                file: <<printf "tenants/%s/identity.yaml" $appName>>
                 overwriteOnCreate: true
                 content: |
-                  appName: <<$appName>>
-                  gitopsRepoUrl: <<$gitopsRepoUrl>>
-                  githubOwner: <<$platformOwner>>
-                commitMessage: <<printf "Onboard %s to %s: add tenants/%s/app.yaml" $appName $cluster $appName | toJson>>
+                  platformIdentity:
+                    appName: <<$appName>>
+                    type: app
+                    gitopsRepoUrl: <<$gitopsRepoUrl>>
+                    appRepoUrl: <<$appRepoUrl>>
+                    githubOwner: <<$platformOwner>>
+                    catalogNamespace: platform-catalog
+                commitMessage: <<printf "Onboard %s to %s: add tenants/%s/identity.yaml" $appName $cluster $appName | toJson>>
             <<- end >>
             ---
             # Commits two SecretStore XR manifests into this cluster's OWN
@@ -257,7 +302,7 @@ spec:
             # triggered it - every sibling ApplicationEnvironment for this (app, cluster)
             # pair writes the identical manifest (overwriteOnCreate: true, deterministic
             # content) - the exact same "redundant-but-harmless idempotent writes" idiom
-            # cluster-app-yaml.yaml already established for this identical "N siblings, one
+            # cluster-identity-yaml.yaml already established for this identical "N siblings, one
             # shared thing" shape, not a new mechanism.
             #
             # Resource 2, per-environment mode: file path/content is UNIQUE per env
@@ -323,10 +368,18 @@ spec:
             # ApplicationSet (git generator over tenants/*/*/identity.yaml) to render the real
             # deployment Application via idp-application. Matches
             # gitops-cluster-dev-tenants/README.md's own documented identity.yaml shape exactly
-            # (appName/gitopsRepoUrl/githubOwner/env) - deliberately duplicating app.yaml's
-            # gitopsRepoUrl/githubOwner rather than requiring the ApplicationSet to join two
-            # files (same reasoning that README already gives). No appRepoUrl here - that field
-            # only lives on app.yaml, no consumer at the per-env level.
+            # (appName/gitopsRepoUrl/githubOwner/env) - deliberately duplicating the sibling
+            # per-app tenants/<appName>/identity.yaml's own gitopsRepoUrl/githubOwner rather than
+            # requiring the ApplicationSet to join two files (same reasoning that README already
+            # gives). Different file, different consumer, DELIBERATELY not the same nested
+            # platformIdentity: shape that sibling file uses (see cluster-identity-yaml.yaml's own
+            # header, and nodejsapplication's cicd-identity-yaml.yaml, for why THAT file's schema
+            # consolidated app.yaml into itself 2026-08-18) - nothing here reads
+            # .platformIdentity.*, forcing that wrapper on would just be cosmetic. gitopsRepoUrl
+            # IS now bare (no .git suffix), same system-wide convention as every other copy of
+            # this URL, even though this file's own consumer (idp's tenant-onboarding
+            # ApplicationSet) never required the change - one URL format everywhere beats a
+            # case-by-case exemption. No appRepoUrl here - no consumer at the per-env level.
             #
             # $appName/$env/$cluster/$xrName/$platformOwner/$tenantsRepo/$gitopsRepoUrl all come
             # from 00-cluster-gate.yaml - see that file's header for why they're declared once
@@ -384,7 +437,7 @@ spec:
             # Dockerfile/.gitignore/README.md - this file is exactly that same category
             # (scaffold once, developer/CI owns it after), just missed when that fix was made
             # since it lives in a different Composition. Deliberately different from THIS
-            # Composition's own cluster-app-yaml.yaml, which keeps full management (including
+            # Composition's own cluster-identity-yaml.yaml, which keeps full management (including
             # Update) because nothing but the Composition should ever touch that one.
             <<- if $clusterOk >>
             apiVersion: repo.github.m.upbound.io/v1alpha1

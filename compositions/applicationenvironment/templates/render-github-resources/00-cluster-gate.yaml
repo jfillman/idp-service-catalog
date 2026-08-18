@@ -10,11 +10,22 @@
 # false, same "not found yet, retry next reconcile" shape already used for
 # WorkloadDeployed/CicdOnboarded, not a new failure mode.
 #
-# $clusterOk/$appName/$env/$cluster/$xrName/$gitopsRepoUrl/$tenantsRepo are all
-# declared once here, not redeclared per file below - Go template variables declared
-# at this (unindented) scope persist for the rest of this template's execution
-# across the --- separators, confirmed by this catalog's existing pattern of one big
-# concatenated template per pipeline step (build-composition.sh).
+# $clusterOk/$appName/$env/$cluster/$xrName/$gitopsRepoUrl/$appRepoUrl/$tenantsRepo
+# are all declared once here, not redeclared per file below - Go template variables
+# declared at this (unindented) scope persist for the rest of this template's
+# execution across the --- separators, confirmed by this catalog's existing pattern
+# of one big concatenated template per pipeline step (build-composition.sh).
+#
+# gitopsRepoUrl/appRepoUrl are bare (no .git suffix) - changed 2026-08-18, was
+# .git-suffixed before. See nodejsapplication's own cicd-identity-yaml.yaml header
+# for the full reasoning: PaC matches a Repository CR's spec.url against GitHub's
+# webhook payload URL with an exact string compare, and that payload never has .git,
+# so any .git-suffixed copy of these URLs breaks PaC matching wherever it's used.
+# ArgoCD's own consumers of these values (tenant-appprojects' AppProject sourceRepos,
+# the lower-env tier's live repoURL) are expected to tolerate the bare form fine -
+# ArgoCD normalizes .git away when comparing repo URLs - live-verified as part of
+# this same change (see gitops-cluster-dev-tenants/README.md's own Status section for
+# the result), not just assumed from ArgoCD's docs.
 #
 # Deliberately ONE YAML document in this file, not two - $clusterOk is computed from
 # .extraResources (a fixed input available from the start of this template's
@@ -31,7 +42,8 @@
 <<- $cluster := $spec.cluster >>
 <<- $platformOwner := "jfillman" >>
 <<- $tenantsRepo := printf "gitops-cluster-%s-tenants" $cluster >>
-<<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s.git" $platformOwner $appName >>
+<<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s" $platformOwner $appName >>
+<<- $appRepoUrl := printf "https://github.com/%s/%s" $platformOwner $appName >>
 <<- $allExtra := .extraResources | default dict >>
 <<- $entry := index $allExtra "cluster-registry-entry" | default dict >>
 <<- $items := index $entry "items" | default list >>

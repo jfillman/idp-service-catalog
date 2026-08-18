@@ -24,8 +24,8 @@
 #
 # managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"] (no "Update") on
 # every RepositoryFile below - deliberately different from applicationenvironment's
-# cluster-app-yaml.yaml, which stays under full management because nothing but the
-# composition should ever touch it. These five files (package.json, index.js,
+# cluster-identity-yaml.yaml, which stays under full management (minus Delete) because
+# nothing but the composition should ever touch it. These five files (package.json, index.js,
 # Dockerfile, .gitignore, README.md) are the opposite: real app source a developer is
 # expected to edit immediately after scaffolding (add dependencies, write a test
 # script, ...). Under the provider's default "*" policy the controller drift-corrects

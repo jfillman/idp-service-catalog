@@ -32,7 +32,7 @@ flipped `crossplaneReady` to `"true"`.
 
 These fixtures only exercise the Composition's template logic (rendered
 `RepositoryFile` shapes including the delete-excluding `managementPolicies` on
-`cluster-app-yaml`, the
+`cluster-identity-yaml`, the
 extra-resources gate branching, the `ClusterReady`/`WorkloadDeployed` status patch) —
 they never call the real GitHub API or fetch a real cluster resource.
 `crossplane render` treats every `provider-github` managed resource as spec-only
