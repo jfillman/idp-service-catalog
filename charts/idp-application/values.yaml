@@ -39,6 +39,15 @@ appType: app # app | infra - naming-conventions.md's existing distinction (§3, 
 cluster: ""
 envName: ""
 
+# NOT in §3's schema - the chart's own "is this the dev cluster" test (secretsScope
+# below, templates/config/external-secret.yaml) used to compare `cluster` against
+# the literal "kind-dev" directly. Pulled out as its own value so the chart doesn't
+# hardcode a specific cluster's name - a real gitops-<app-name>/<cluster>/<env>/
+# values.yaml only needs to override this if its fleet's dev cluster is ever named
+# something other than "kind-dev" (matches this catalog's existing single-dev-
+# cluster assumption - see xrds/secretstore.yaml).
+devClusterName: kind-dev
+
 # NOT in the schema doc - platform-cicd-specific plumbing (idp-service-catalog is
 # not the only writer of this file: idp-service-catalog's own ApplicationEnvironment
 # composition bootstraps a values.yaml with this null/absent, and platform-cicd's
