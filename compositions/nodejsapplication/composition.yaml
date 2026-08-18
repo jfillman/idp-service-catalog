@@ -211,6 +211,15 @@ spec:
                 description: <<printf "GitOps deployment repo for %s - <cluster>/<env>/values.yaml per environment" $xrName | toJson>>
                 visibility: <<$visibility>>
                 autoInit: true
+                # See src-repo.yaml's own header for why this is explicit, not omitted -
+                # terraform-provider-github's schema default ("enabled") isn't actually
+                # PATCHable on this account's private repos (422, no GHAS entitlement),
+                # unlike an explicit "disabled".
+                securityAndAnalysis:
+                  - secretScanning:
+                      - status: disabled
+                    secretScanningPushProtection:
+                      - status: disabled
             ---
             apiVersion: repo.github.m.upbound.io/v1alpha1
             kind: RepositoryFile
@@ -364,6 +373,19 @@ spec:
                 autoInit: true
                 hasIssues: true
                 deleteBranchOnMerge: true
+                # Explicit, not omitted - terraform-provider-github's own schema defaults this
+                # nested block's statuses to "enabled" when entirely unset, which upjet then
+                # late-inits into spec.forProvider as this catalog's real desired state. GitHub's
+                # API confirmed live (`gh api`) to reject PATCHing "enabled" for a private repo on
+                # this account (422 "Secret scanning is not available for this repository" - no
+                # GHAS entitlement) even though GitHub itself silently created the repo with it
+                # "on" - only an explicit "disabled" PATCH is accepted. Setting it here ends the
+                # otherwise-permanent ReconcileError loop this caused on every reconcile.
+                securityAndAnalysis:
+                  - secretScanning:
+                      - status: disabled
+                    secretScanningPushProtection:
+                      - status: disabled
             ---
             apiVersion: repo.github.m.upbound.io/v1alpha1
             kind: RepositoryFile

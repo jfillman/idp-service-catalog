@@ -20,6 +20,15 @@ spec:
     description: <<printf "GitOps deployment repo for %s - <cluster>/<env>/values.yaml per environment" $xrName | toJson>>
     visibility: <<$visibility>>
     autoInit: true
+    # See src-repo.yaml's own header for why this is explicit, not omitted -
+    # terraform-provider-github's schema default ("enabled") isn't actually
+    # PATCHable on this account's private repos (422, no GHAS entitlement),
+    # unlike an explicit "disabled".
+    securityAndAnalysis:
+      - secretScanning:
+          - status: disabled
+        secretScanningPushProtection:
+          - status: disabled
 ---
 apiVersion: repo.github.m.upbound.io/v1alpha1
 kind: RepositoryFile
