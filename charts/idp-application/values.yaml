@@ -230,11 +230,17 @@ secrets: [] # Embedded - same ExternalSecret/ClusterSecretStore mechanism platfo
 #                                # directory, unlike configMaps' mountPath - each
 #                                # secrets: entry is exactly one key). Defaults to
 #                                # /secrets/<name> when omitted.
-#   shared: false        # NOT in §3's schema - item 8 says "shared" secrets live under
-#                         # a /shared/* Infisical path, env-specific ones under /<env>/*,
-#                         # and which path a given env reads is "controlled by that
-#                         # env's own ExternalSecret (remoteRef), not by the store" -
-#                         # this is that per-entry control. Defaults to false (env-scoped).
+#   shared: false        # NOT in §3's schema. On any cluster other than kind-dev:
+#                         # false (default) reads from this env's own, isolated
+#                         # Infisical environment/ClusterSecretStore (real isolation -
+#                         # see xrds/secretstore.yaml); true reads from the wide
+#                         # shared one instead, for values genuinely meant to be
+#                         # reused across an app's envs on this cluster. On kind-dev,
+#                         # there's no per-env store at all (ephemeral dev/pr-N churn
+#                         # makes real per-env Infisical environments wasteful there) -
+#                         # both cases read the one shared store, separated by an
+#                         # Infisical PATH prefix instead (shared/<name> vs
+#                         # <envName>/<name>).
 
 volumes: [] # Embedded - PVC support. Same list-of-objects + range-loop pattern as
             # configMaps, per §3's 2026-08-13 revision.

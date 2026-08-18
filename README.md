@@ -68,6 +68,27 @@ multi-cluster revision) — done, live-verified end-to-end on both `kind-dev` an
 See `idp/docs/service-catalog-design.md` Item 8 for the full design writeup and
 `operators/infisical-secretstore-operator/README.md` for the operator-level detail.
 
+**SecretStore provisioning moved to the Bootstrap XRs (xr-requests), off
+idp-application's chart — done, live-verified against real existing apps on both
+clusters 2026-08-18.** Real user objection to the above: an always-on chart
+template meant secrets infrastructure only existed once someone shipped an actual
+release, not when an app/env was onboarded. `NodeJSApplication` and
+`ApplicationEnvironment` now each commit a `SecretStore` XR manifest via
+`xr-requests` instead (`idp-application`'s `attached/secretstore.yaml` deleted
+entirely) - real nuance recorded in the design doc: `NodeJSApplication` could have
+composed it directly (same-cluster), `ApplicationEnvironment` structurally can't
+(cross-cluster, the same "no cluster holds another's API credential" constraint
+that already kept `AppProject` ownership out of direct composition). kind-prod
+needed its own `xr-requests` mechanism for the first time (Bootstrap XRs never ran
+on upper clusters before). Also fixed the same day: `external-secret.yaml` never
+actually routed secrets through the per-environment stores the prior revision
+built - every secret silently still went through the old shared-store/path
+convention. Fixed via ESO's real per-entry `sourceRef.storeRef` override.
+
+See `idp/docs/service-catalog-design.md` Item 8's third revision for the full
+writeup, including two real bugs found live from the old and new mechanisms
+briefly coexisting mid-migration (not flaws in either design on its own).
+
 **AI-triage mechanism (Phase 2, first slice) — done, live-verified
 2026-08-13.** `functions/function-rollout-watcher` + `functions/diagnosis-holmes-dispatch`:
 a Crossplane Composition Function that watches an Argo Rollout and, on

@@ -315,32 +315,33 @@ undeployed relay, no private-registry pull credential).
 Also resolved, not placeholders anymore: `networkPolicy.ingressControllerNamespaceSelector`
 is `projectcontour` (Contour, confirmed live - not the `ingress-nginx` guess).
 
-## SecretStore auto-provisioning (2026-08-17, seventh pass)
+## SecretStore auto-provisioning (2026-08-17, seventh pass - SUPERSEDED same-ish day)
 
-`templates/attached/secretstore.yaml` - always-on, same treatment as
+~~`templates/attached/secretstore.yaml` - always-on, same treatment as
 `NetworkPolicy`/`ServiceMonitor`, not a `components:`/`slos:` entry and not gated by
 any values field. Renders the `SecretStore` XRD's `"shared"` mode unconditionally
 (idempotent, redundant-safe across every env release for one `(app, cluster)` pair -
 same convention `applicationenvironment`'s own `cluster-app-yaml.yaml` already uses),
-plus, on any cluster other than kind-dev, this env's own per-environment-mode XR too
-- `idp/docs/service-catalog-design.md` Item 8's multi-cluster revision. This is what
-actually creates the Infisical project/environment/`ClusterSecretStore` chain now -
-`ApplicationEnvironment`'s own Composition can't (`provider-github`-only, no access to
-any cluster's native resources, including kind-dev's own).
+plus, on any cluster other than kind-dev, this env's own per-environment-mode XR too.
+Renders into a dedicated namespace, `app-<appName>-secrets`, not this release's own
+namespace - the `"shared"` XR must be the exact same object across every env release
+for one `(app, cluster)` pair, which only works if every release targets the same
+namespace+name.~~
 
-Renders into a DEDICATED namespace, `app-<appName>-secrets`, not this release's own
-namespace - deliberate: the `"shared"` XR must be the exact same object across every
-env release for one `(app, cluster)` pair, which only works if every release targets
-the same namespace+name. Already covered by this app's `AppProject`
-(`clusterResourceWhitelist: Namespace`, wildcard `app-<appName>-*` destination) -
-verified against that AppProject's real chart before assuming it, not guessed.
-
-**One real bug caught live, `helm lint`-only** (never hit `helm template` with real
-values): with this chart's own all-empty default `values.yaml`,
-`{{ .Values.appName }}-{{ .Values.cluster }}` renders as a bare `-`, which YAML
-parses as an ambiguous block-sequence indicator in scalar position, not the plain
-string `"-"` - a hard parse failure (`block sequence entries are not allowed in this
-context`), not just an invalid-name warning like every other template's empty-values
-case. Fixed by explicitly quoting every computed name in this template
-(`| quote`) - not needed elsewhere in this chart, since no other template's naming
-pattern happens to collapse to a lone `-` under all-empty inputs.
+**Superseded, real complaint from you: provisioning secrets infrastructure
+shouldn't be an emergent side effect of "someone happened to deploy a real
+release."** Moved to `NodeJSApplication`/`ApplicationEnvironment`'s own
+Compositions instead - both now commit a `SecretStore` XR manifest via the
+`xr-requests` mechanism (same pattern already proven for every other Bootstrap
+XR), so secrets infrastructure exists the moment onboarding/env-creation
+reconciles, github-commit-speed, no Helm release required at all. This chart no
+longer renders `SecretStore` in any form - see
+`idp/docs/service-catalog-design.md` Item 8's second multi-cluster revision and
+`compositions/nodejsapplication/`/`compositions/applicationenvironment/`'s own
+new templates for the real mechanism. The one real bug this pass DID catch
+(quoting computed names to survive `helm lint`'s all-empty defaults - a bare `-`
+parses as an ambiguous YAML block-sequence indicator) has no chart-side
+descendant to preserve; kept here only as a note for whichever Composition
+template needs the same care next (Go's `text/template`, not Helm, but the same
+underlying YAML-ambiguity risk applies to `<<$appName>>-<<$cluster>>`-shaped
+names there too).

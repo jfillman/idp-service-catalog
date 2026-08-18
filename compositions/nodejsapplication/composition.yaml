@@ -159,6 +159,57 @@ spec:
                   here, rendered by `idp-application` (idp-service-catalog's shared Helm chart).
                 commitMessage: "NodeJSApplication scaffold: README.md"
             ---
+            # Commits a "shared"-mode SecretStore XR manifest into
+            # tenants/<app-name>/xr-requests/secretstore.yaml - picked up by kind-dev's own
+            # xr-requests ApplicationSet (gitops-cluster-dev/02-argocd-apps/xr-requests/),
+            # the SAME mechanism every other Bootstrap XR already goes through, applied
+            # directly (no Helm release needed) into app-<app-name>-cicd on kind-dev.
+            #
+            # Real, deliberate correction of the original design (idp/docs/
+            # service-catalog-design.md Item 8's second multi-cluster revision): secrets
+            # infrastructure used to be an emergent side effect of idp-application's own
+            # chart rendering an always-on SecretStore XR the first time some env actually
+            # got deployed - meant "when does this exist" wasn't discoverable from the
+            # Bootstrap XRD list at all, and tied provisioning to "someone happened to ship
+            # a real release" rather than to onboarding itself. This is the fix: the SAME
+            # unconditional, idempotent commit pattern tenant-app-yaml.yaml/
+            # cicd-identity-yaml.yaml already use in this same step - overwriteOnCreate:
+            # true, deterministic content, no existence-check needed (a NodeJSApplication is
+            # created exactly once per app, so there's no "N siblings" ownership question
+            # here at all, unlike ApplicationEnvironment's own copy of this same idea).
+            #
+            # Why kind-dev specifically, unconditionally, no cluster field: NodeJSApplication
+            # is permanently centralized on kind-dev (Bootstrap-tier's own locality rule) -
+            # this is the app's OWN dev-cluster secrets store, always exactly one, matching
+            # xrds/secretstore.yaml's own "one shared environment for the dev cluster"
+            # scope (no per-env store on kind-dev - see that XRD's header for why).
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $tenantsRepo := "gitops-cluster-dev-tenants" >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-secretstore-xr
+              annotations:
+                <<setResourceNameAnnotation "secretstore-xr">>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$tenantsRepo>>
+                file: <<printf "tenants/%s/xr-requests/secretstore.yaml" $xrName>>
+                overwriteOnCreate: true
+                content: |
+                  apiVersion: catalog.idp.io/v1alpha1
+                  kind: SecretStore
+                  metadata:
+                    name: <<printf "%s-kind-dev" $xrName>>
+                  spec:
+                    appRef:
+                      name: <<$xrName>>
+                    cluster: kind-dev
+                commitMessage: <<printf "Onboard %s: add tenants/%s/xr-requests/secretstore.yaml" $xrName $xrName | toJson>>
+            ---
             # Src repo + Node.js boilerplate. Rendered by function-go-templating (source: Inline,
             # see ../composition.yaml/../build-composition.sh), using double-angle-bracket
             # delimiters (see composition.yaml) - same convention as compositions/slo, for the same
