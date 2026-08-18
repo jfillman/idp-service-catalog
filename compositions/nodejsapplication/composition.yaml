@@ -143,6 +143,11 @@ spec:
               annotations:
                 <<setResourceNameAnnotation "gitops-repo-readme">>
             spec:
+              # No "Update" - same fix, same reasoning as src-repo.yaml's own scaffold files
+              # and applicationenvironment's values-yaml.yaml (which had the actual live bug,
+              # 2026-08-18) - a scaffolded README a developer might reasonably edit shouldn't
+              # get drift-corrected back to this static template.
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
                 kind: ClusterProviderConfig
                 name: default

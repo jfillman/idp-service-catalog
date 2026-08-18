@@ -367,12 +367,25 @@ spec:
             # instead, same "structural backstop, refuse rather than partially succeed" instinct
             # already used for the WorkloadDeployed condition below.
             #
-            # rollout: null (not a placeholder image) - there's no real image to deploy yet, this
-            # platform's CICD control plane isn't running on kind-dev (same gap
-            # NodeJSApplication already reports via CicdOnboarded). idp-application's chart
-            # already fixture-tests rollout: null cleanly (no Rollout/Service/HPA/PDB rendered,
-            # just NetworkPolicy/ServiceAccount) - see charts/idp-application/README.md's "Live-
-            # verified" section.
+            # rollout: null - the initial bootstrap scaffold only, not an ongoing default. This
+            # platform's CICD pipeline (and a developer directly) is expected to edit this file's
+            # real content afterward (image tag, ports, ...) as normal GitOps - see
+            # idp-application's chart for what rollout: null itself fixture-tests cleanly (no
+            # Rollout/Service/HPA/PDB rendered, just NetworkPolicy/ServiceAccount) as the safe
+            # starting state before any of that happens.
+            #
+            # managementPolicies (no "Update") - real bug hit live 2026-08-18: without this,
+            # the provider's default "*" policy drift-corrects any post-bootstrap edit
+            # (checkout-api-kind-prod-prod's real rollout.image/ports config) back to this
+            # static rollout: null on the next reconcile - confirmed via the file's own git
+            # history, a "Bootstrap prod environment" commit reverting the developer's "update
+            # app config" commit ~17 minutes later. Same fix, same reasoning, as
+            # nodejsapplication's src-repo.yaml already applied to package.json/index.js/
+            # Dockerfile/.gitignore/README.md - this file is exactly that same category
+            # (scaffold once, developer/CI owns it after), just missed when that fix was made
+            # since it lives in a different Composition. Deliberately different from THIS
+            # Composition's own cluster-app-yaml.yaml, which keeps full management (including
+            # Update) because nothing but the Composition should ever touch that one.
             <<- if $clusterOk >>
             apiVersion: repo.github.m.upbound.io/v1alpha1
             kind: RepositoryFile
@@ -381,6 +394,7 @@ spec:
               annotations:
                 <<setResourceNameAnnotation "values-yaml">>
             spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
                 kind: ClusterProviderConfig
                 name: default
