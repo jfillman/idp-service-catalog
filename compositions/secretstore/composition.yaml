@@ -32,6 +32,65 @@ spec:
         source: Inline
         inline:
           template: |
+            # Real Crossplane extra-resources lookup against the cluster registry
+            # (gitops-cluster-dev/00-bootstrap/cluster-registry/, service-catalog-design.md §0) -
+            # same `matchName` pattern applicationenvironment's own 00-cluster-gate.yaml and
+            # nodejsapplication's own 00-devcluster-gate.yaml already use, added here 2026-08-18.
+            #
+            # Replaces what used to be a plain `eq $spec.cluster "kind-dev"` string comparison in
+            # each of this directory's three resource files (clustersecretstore.yaml,
+            # infisicalproject.yaml, per-env-secretstore.yaml) - a prior session deliberately chose
+            # that static comparison over a live lookup, reasoning "which cluster hosts Infisical
+            # is a static topology fact... today: only ever kind-dev" (see this catalog's own git
+            # history). That reasoning assumed a single permanent dev cluster; the fleet now
+            # supports multiple, which breaks it: a SECOND dev cluster is still type: dev but does
+            # NOT physically run Infisical (idp/docs/service-catalog-design.md Item 8 deliberately
+            # keeps one shared Infisical instance, not one per dev cluster - "second Infisical
+            # instance per cluster" was weighed and rejected for the extra live infra cost). A
+            # plain type: dev check would incorrectly route it to local Kubernetes Auth against an
+            # Infisical that isn't running there. `infisicalHost` is a separate, independent
+            # registry field from `type` for exactly this reason - see kind-dev.yaml's own header.
+            #
+            # Declared once here (this Composition's single function-go-templating pipeline step
+            # concatenates every templates/*.yaml file into one template execution - see
+            # build-composition.sh - so $isInfisicalHost below is available to every later file in
+            # this same directory without redeclaring the ExtraResources requirement itself,
+            # matching 00-cluster-gate.yaml's own "declared once, persists across --- separators"
+            # convention). Each resource file still redeclares its own $spec locally, matching this
+            # Composition's existing per-file convention (infisicalproject.yaml/
+            # clustersecretstore.yaml/per-env-secretstore.yaml each already redeclare $spec/
+            # $appName/$envSlug/$projectSlug independently, even within this same step).
+            #
+            # Behavior-preserving for any cluster name that ISN'T registered at all (a typo, or a
+            # cluster mid-onboarding before its registry entry lands): $items stays empty,
+            # $isInfisicalHost stays false, exactly matching the ORIGINAL code's "anything other
+            # than the literal kind-dev" fallback to Universal Auth - no new hard gate introduced,
+            # unlike ApplicationEnvironment/NodeJSApplication's own registry gates which refuse to
+            # render entirely. This Composition still makes no OTHER cross-cluster call (xrds/
+            # secretstore.yaml's own header) - this lookup is local-cluster-only, same as
+            # ApplicationEnvironment's and NodeJSApplication's.
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $allExtra := .extraResources | default dict >>
+            <<- $entry := index $allExtra "cluster-registry-entry" | default dict >>
+            <<- $items := index $entry "items" | default list >>
+            <<- $isInfisicalHost := false >>
+            <<- if gt (len $items) 0 >>
+              <<- $cm := (index $items 0).resource >>
+              <<- $infisicalHost := index $cm.data "infisicalHost" | default "" >>
+              <<- if eq $infisicalHost "true" >>
+                <<- $isInfisicalHost = true >>
+              <<- end >>
+            <<- end >>
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ExtraResources
+            requirements:
+              cluster-registry-entry:
+                apiVersion: v1
+                kind: ConfigMap
+                namespace: crossplane-system
+                matchName: <<$spec.cluster>>
+            ---
+            ---
             # Rendered by function-go-templating (source: Inline, see composition.yaml/
             # build-composition.sh).
             #
@@ -86,10 +145,11 @@ spec:
             # computes and creates ITS OWN differently-named ClusterSecretStore, and the two
             # must never collide.
             #
-            # hostAPI/authMethod both branch on spec.cluster - see infisicalproject.yaml's own
-            # header for why this is a plain string comparison, not an ExtraResources lookup.
-            # The kind-dev branch is this cluster's own in-cluster Service DNS (Infisical and
-            # every workload calling it are the same cluster there). The non-kind-dev branch is
+            # hostAPI/authMethod both branch on $isInfisicalHost (00-infisical-host-gate.yaml,
+            # same pipeline step - see that file's own header for why this is a live cluster-
+            # registry lookup now, not the plain string comparison this used to be). The
+            # Infisical-host branch is this cluster's own in-cluster Service DNS (Infisical and
+            # every workload calling it are the same cluster there). The other branch is
             # a real, live-verified NodePort address (infisical-nodeport.yaml, same directory as
             # this operator's other deploy manifests) - a kind-cluster-local-sandbox stand-in for
             # what a real routable endpoint would be between genuinely separate clusters; flagged
@@ -102,7 +162,7 @@ spec:
             <<- $credsSecretName := printf "%s-infisical-creds" $projectSlug >>
             <<- $hostAPI := "http://10.89.0.2:31800/api" >>
             <<- $authMethod := "universal" >>
-            <<- if eq $spec.cluster "kind-dev" >>
+            <<- if $isInfisicalHost >>
               <<- $hostAPI = "http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080/api" >>
               <<- $authMethod = "kubernetes" >>
             <<- end >>
@@ -177,24 +237,27 @@ spec:
             # name) can compute the identical project slug its "shared" sibling already created,
             # with no ExtraResources lookup needed either way.
             #
-            # authMethod: a plain string comparison on spec.cluster, not an ExtraResources
-            # cluster-registry lookup like ApplicationEnvironment's gate uses - deliberately
-            # different, not an inconsistency. The registry gate checks LIVE readiness state
-            # (crossplaneReady) that can change over time and must be re-checked every
-            # reconcile; which cluster hosts Infisical is a static topology fact (today: only
-            # ever kind-dev), matching this catalog's existing convention of hardcoding
-            # "kind-dev" as a literal pending real multi-dev-cluster support (e.g.
-            # tenant-onboarding/lower-envs-applicationset.yaml's own cluster: kind-dev). See
-            # idp/docs/service-catalog-design.md Item 8's multi-cluster revision for the real
-            # reasoning (Kubernetes Auth needs Infisical and the workload on the SAME cluster;
-            # Infisical only runs on kind-dev, so every OTHER cluster needs Universal Auth
-            # instead - Gateway mode, the alternative, is Enterprise-only).
+            # authMethod: now an ExtraResources cluster-registry lookup after all (2026-08-18) -
+            # a real reversal of this file's own prior reasoning. That reasoning was "which
+            # cluster hosts Infisical is a static topology fact (today: only ever kind-dev)" -
+            # true only as long as exactly one dev cluster could ever exist. The fleet now
+            # supports multiple; a second dev cluster is still type: dev but does NOT physically
+            # run Infisical (idp/docs/service-catalog-design.md Item 8 deliberately keeps one
+            # shared Infisical instance, not one per dev cluster), so "is this cluster dev-typed"
+            # and "does this cluster host Infisical" are no longer the same fact - see
+            # 00-infisical-host-gate.yaml (same pipeline step) for the live lookup against the
+            # registry's own `infisicalHost` field, and kind-dev.yaml's own header for why that's
+            # a separate field from `type`. See idp/docs/service-catalog-design.md Item 8's
+            # multi-cluster revision for the original reasoning this builds on (Kubernetes Auth
+            # needs Infisical and the workload on the SAME cluster; every cluster that isn't the
+            # Infisical host needs Universal Auth instead - Gateway mode, the alternative, is
+            # Enterprise-only).
             <<- $spec := .observed.composite.resource.spec >>
             <<- $appName := $spec.appRef.name >>
             <<- $envSlug := $spec.environmentSlug | default "shared" >>
             <<- $projectSlug := printf "%s-%s" $appName $spec.cluster >>
             <<- $authMethod := "universal" >>
-            <<- if eq $spec.cluster "kind-dev" >>
+            <<- if $isInfisicalHost >>
               <<- $authMethod = "kubernetes" >>
             <<- end >>
             <<- if eq $envSlug "shared" >>
@@ -241,7 +304,7 @@ spec:
             <<- $credsSecretName := printf "%s-infisical-creds" $projectSlug >>
             <<- $hostAPI := "http://10.89.0.2:31800/api" >>
             <<- $authMethod := "universal" >>
-            <<- if eq $spec.cluster "kind-dev" >>
+            <<- if $isInfisicalHost >>
               <<- $hostAPI = "http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080/api" >>
               <<- $authMethod = "kubernetes" >>
             <<- end >>

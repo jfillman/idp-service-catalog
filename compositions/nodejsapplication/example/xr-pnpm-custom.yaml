@@ -4,6 +4,7 @@ metadata:
   name: checkout-api
   namespace: demo-apps
 spec:
+  devCluster: kind-dev
   description: Checkout API for the demo storefront
   nodeVersion: "22"
   packageManager: pnpm

@@ -1,5 +1,6 @@
-# Commits tenants/<app-name>/identity.yaml into gitops-cluster-dev-tenants - the ONE
-# per-app tenant identity file on this cluster (2026-08-18: absorbed app.yaml, which
+# Commits tenants/<app-name>/identity.yaml into this app's devCluster's own tenants
+# repo (today, for kind-dev: gitops-cluster-dev-tenants) - the ONE per-app tenant
+# identity file on this cluster (2026-08-18: absorbed app.yaml, which
 # used to sit right next to this file with an overlapping-but-not-identical field set -
 # see "identity.yaml absorbs app.yaml" below). Read by TWO independent ApplicationSets
 # now: platform-cicd's own tenant-onboarding ApplicationSet (charts/
@@ -34,18 +35,22 @@
 # nodejs-demo-app/identity.yaml) never had .git here either - this restores that
 # convention rather than introducing a new one.
 #
-# $tenantsRepo (2026-08-16, redirected): gitops-cluster-dev-tenants - previously a
-# dedicated platform-cicd-kind-dev-tenants repo, eliminated once live history showed it
-# only ever held throwaway verification apps and both platform-cicd/docs/onboarding.md
-# and idp/README.md confirmed kind-dev's platform-cicd instance is idp-exclusive (unlike
+# $tenantsRepo (2026-08-16, redirected): previously a dedicated
+# platform-cicd-kind-dev-tenants repo, eliminated once live history showed it only ever
+# held throwaway verification apps and both platform-cicd/docs/onboarding.md and
+# idp/README.md confirmed kind-dev's platform-cicd instance is idp-exclusive (unlike
 # kind-observe, which hosts real, independent, non-idp tenants and keeps its own
 # platform-cicd.git-relative tenants/ - unaffected by this change). Confirmed live no
 # AppProject change is needed either: platform-onboarding's sourceRepos already
 # wildcards https://github.com/jfillman/*, and tenantsRepoUrl is only ever a generator
-# input, never gated by sourceRepos at all. This is a Bootstrap-tier XRD, centralized on
-# kind-dev permanently (idp_session_multicluster_architecture), so unlike
-# ApplicationEnvironment's spec.cluster there's still no per-cluster target to
-# parameterize here.
+# input, never gated by sourceRepos at all.
+#
+# 2026-08-18: $tenantsRepo/gate now come from 00-devcluster-gate.yaml (same pipeline
+# step, persists across this file) instead of a hardcoded "gitops-cluster-dev-tenants"
+# literal - this Bootstrap-tier XRD was "permanently centralized on kind-dev" only as
+# long as exactly one dev cluster existed; spec.devCluster is now real and required,
+# and this resource only renders once that cluster resolves live against the registry
+# (type: dev, cicdReady: "true") - see the gate file's own header.
 #
 # type: app (not infra) - NodeJSApplication only ever provisions regular applications,
 # never platform-adjacent services, so this is a fixed literal, not a spec field.
@@ -55,11 +60,10 @@
 # All six platformIdentity fields are present even though platform-cicd's own docs allow
 # "" for unused ones - gitopsRepoUrl/appRepoUrl are always real here (NodeJSApplication
 # always provisions both repos), so there's nothing to leave empty.
-<<- $xrName := .observed.composite.resource.metadata.name >>
 <<- $platformOwner := "jfillman" >>
-<<- $tenantsRepo := "gitops-cluster-dev-tenants" >>
 <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s" $platformOwner $xrName >>
 <<- $appRepoUrl := printf "https://github.com/%s/%s" $platformOwner $xrName >>
+<<- if $clusterOk >>
 apiVersion: repo.github.m.upbound.io/v1alpha1
 kind: RepositoryFile
 metadata:
@@ -83,3 +87,4 @@ spec:
         githubOwner: <<$platformOwner>>
         catalogNamespace: platform-catalog
     commitMessage: <<printf "Onboard %s: add tenants/%s/identity.yaml for CICD pipeline onboarding" $xrName $xrName | toJson>>
+<<- end >>

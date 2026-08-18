@@ -1,0 +1,61 @@
+# Real Crossplane extra-resources lookup against the cluster registry
+# (gitops-cluster-dev/00-bootstrap/cluster-registry/, service-catalog-design.md §0) -
+# same mechanism/pattern as applicationenvironment's own 00-cluster-gate.yaml, adapted
+# here now that spec.devCluster is real and required (2026-08-18): this XRD used to be
+# permanently centralized on a hardcoded "kind-dev" (see this Composition's own git
+# history), correct only as long as exactly one dev cluster ever existed. The fleet now
+# supports multiple - an app is pinned to exactly one via spec.devCluster, and THIS
+# gate is what validates that choice live rather than trusting the string blindly.
+#
+# type: dev + cicdReady: "true" (not type: upper + crossplaneReady, which
+# ApplicationEnvironment's own gate checks) - a dev cluster is defined by running
+# platform-cicd's control plane, and cicdReady is exactly the field that flips true
+# once that's GitOps-managed and live-verified on a given cluster (see kind-dev.yaml's
+# own history).
+#
+# $clusterOk/$xrName/$devCluster/$tenantsRepo are declared once here, not redeclared
+# per file below - Go template variables declared at this (unindented) scope persist
+# for the rest of THIS pipeline step's execution across the --- separators (same
+# concatenated-template convention 00-cluster-gate.yaml's own header documents).
+# cicd-onboarding-status/status.yaml is a SEPARATE pipeline step (its own template
+# execution scope) and redeclares this same lookup itself, same as
+# applicationenvironment/templates/status/status.yaml does for its own gate.
+#
+# $tenantsRepo now comes from the registry entry's own data.tenantsRepo, not a
+# hardcoded "gitops-cluster-dev-tenants" literal - kind-dev's tenants repo is a legacy
+# name that breaks the gitops-cluster-<cluster>-tenants convention every upper cluster
+# uses (renaming the real, live repo was out of scope - too disruptive to already-wired
+# ArgoCD Applications). Recorded as registry data instead so a future second dev
+# cluster can follow the clean convention without another hardcoded exception here.
+#
+# Deliberately ONE YAML document in this file, not two - see 00-cluster-gate.yaml's own
+# header for why (computing everything up front via template actions with no literal
+# output, before the ExtraResources document itself, avoids an untested "does
+# function-go-templating tolerate a blank rendered document" question entirely).
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $devCluster := $spec.devCluster >>
+<<- $allExtra := .extraResources | default dict >>
+<<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+<<- $items := index $entry "items" | default list >>
+<<- $clusterOk := false >>
+<<- $clusterType := "" >>
+<<- $cicdReady := "" >>
+<<- $tenantsRepo := "" >>
+<<- if gt (len $items) 0 >>
+  <<- $cm := (index $items 0).resource >>
+  <<- $clusterType = $cm.data.type >>
+  <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+  <<- $tenantsRepo = index $cm.data "tenantsRepo" | default "" >>
+  <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+    <<- $clusterOk = true >>
+  <<- end >>
+<<- end >>
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ExtraResources
+requirements:
+  devcluster-registry-entry:
+    apiVersion: v1
+    kind: ConfigMap
+    namespace: crossplane-system
+    matchName: <<$devCluster>>

@@ -36,8 +36,71 @@ spec:
         source: Inline
         inline:
           template: |
-            # Commits tenants/<app-name>/identity.yaml into gitops-cluster-dev-tenants - the ONE
-            # per-app tenant identity file on this cluster (2026-08-18: absorbed app.yaml, which
+            # Real Crossplane extra-resources lookup against the cluster registry
+            # (gitops-cluster-dev/00-bootstrap/cluster-registry/, service-catalog-design.md §0) -
+            # same mechanism/pattern as applicationenvironment's own 00-cluster-gate.yaml, adapted
+            # here now that spec.devCluster is real and required (2026-08-18): this XRD used to be
+            # permanently centralized on a hardcoded "kind-dev" (see this Composition's own git
+            # history), correct only as long as exactly one dev cluster ever existed. The fleet now
+            # supports multiple - an app is pinned to exactly one via spec.devCluster, and THIS
+            # gate is what validates that choice live rather than trusting the string blindly.
+            #
+            # type: dev + cicdReady: "true" (not type: upper + crossplaneReady, which
+            # ApplicationEnvironment's own gate checks) - a dev cluster is defined by running
+            # platform-cicd's control plane, and cicdReady is exactly the field that flips true
+            # once that's GitOps-managed and live-verified on a given cluster (see kind-dev.yaml's
+            # own history).
+            #
+            # $clusterOk/$xrName/$devCluster/$tenantsRepo are declared once here, not redeclared
+            # per file below - Go template variables declared at this (unindented) scope persist
+            # for the rest of THIS pipeline step's execution across the --- separators (same
+            # concatenated-template convention 00-cluster-gate.yaml's own header documents).
+            # cicd-onboarding-status/status.yaml is a SEPARATE pipeline step (its own template
+            # execution scope) and redeclares this same lookup itself, same as
+            # applicationenvironment/templates/status/status.yaml does for its own gate.
+            #
+            # $tenantsRepo now comes from the registry entry's own data.tenantsRepo, not a
+            # hardcoded "gitops-cluster-dev-tenants" literal - kind-dev's tenants repo is a legacy
+            # name that breaks the gitops-cluster-<cluster>-tenants convention every upper cluster
+            # uses (renaming the real, live repo was out of scope - too disruptive to already-wired
+            # ArgoCD Applications). Recorded as registry data instead so a future second dev
+            # cluster can follow the clean convention without another hardcoded exception here.
+            #
+            # Deliberately ONE YAML document in this file, not two - see 00-cluster-gate.yaml's own
+            # header for why (computing everything up front via template actions with no literal
+            # output, before the ExtraResources document itself, avoids an untested "does
+            # function-go-templating tolerate a blank rendered document" question entirely).
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $devCluster := $spec.devCluster >>
+            <<- $allExtra := .extraResources | default dict >>
+            <<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+            <<- $items := index $entry "items" | default list >>
+            <<- $clusterOk := false >>
+            <<- $clusterType := "" >>
+            <<- $cicdReady := "" >>
+            <<- $tenantsRepo := "" >>
+            <<- if gt (len $items) 0 >>
+              <<- $cm := (index $items 0).resource >>
+              <<- $clusterType = $cm.data.type >>
+              <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+              <<- $tenantsRepo = index $cm.data "tenantsRepo" | default "" >>
+              <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+                <<- $clusterOk = true >>
+              <<- end >>
+            <<- end >>
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ExtraResources
+            requirements:
+              devcluster-registry-entry:
+                apiVersion: v1
+                kind: ConfigMap
+                namespace: crossplane-system
+                matchName: <<$devCluster>>
+            ---
+            # Commits tenants/<app-name>/identity.yaml into this app's devCluster's own tenants
+            # repo (today, for kind-dev: gitops-cluster-dev-tenants) - the ONE per-app tenant
+            # identity file on this cluster (2026-08-18: absorbed app.yaml, which
             # used to sit right next to this file with an overlapping-but-not-identical field set -
             # see "identity.yaml absorbs app.yaml" below). Read by TWO independent ApplicationSets
             # now: platform-cicd's own tenant-onboarding ApplicationSet (charts/
@@ -72,18 +135,22 @@ spec:
             # nodejs-demo-app/identity.yaml) never had .git here either - this restores that
             # convention rather than introducing a new one.
             #
-            # $tenantsRepo (2026-08-16, redirected): gitops-cluster-dev-tenants - previously a
-            # dedicated platform-cicd-kind-dev-tenants repo, eliminated once live history showed it
-            # only ever held throwaway verification apps and both platform-cicd/docs/onboarding.md
-            # and idp/README.md confirmed kind-dev's platform-cicd instance is idp-exclusive (unlike
+            # $tenantsRepo (2026-08-16, redirected): previously a dedicated
+            # platform-cicd-kind-dev-tenants repo, eliminated once live history showed it only ever
+            # held throwaway verification apps and both platform-cicd/docs/onboarding.md and
+            # idp/README.md confirmed kind-dev's platform-cicd instance is idp-exclusive (unlike
             # kind-observe, which hosts real, independent, non-idp tenants and keeps its own
             # platform-cicd.git-relative tenants/ - unaffected by this change). Confirmed live no
             # AppProject change is needed either: platform-onboarding's sourceRepos already
             # wildcards https://github.com/jfillman/*, and tenantsRepoUrl is only ever a generator
-            # input, never gated by sourceRepos at all. This is a Bootstrap-tier XRD, centralized on
-            # kind-dev permanently (idp_session_multicluster_architecture), so unlike
-            # ApplicationEnvironment's spec.cluster there's still no per-cluster target to
-            # parameterize here.
+            # input, never gated by sourceRepos at all.
+            #
+            # 2026-08-18: $tenantsRepo/gate now come from 00-devcluster-gate.yaml (same pipeline
+            # step, persists across this file) instead of a hardcoded "gitops-cluster-dev-tenants"
+            # literal - this Bootstrap-tier XRD was "permanently centralized on kind-dev" only as
+            # long as exactly one dev cluster existed; spec.devCluster is now real and required,
+            # and this resource only renders once that cluster resolves live against the registry
+            # (type: dev, cicdReady: "true") - see the gate file's own header.
             #
             # type: app (not infra) - NodeJSApplication only ever provisions regular applications,
             # never platform-adjacent services, so this is a fixed literal, not a spec field.
@@ -93,11 +160,10 @@ spec:
             # All six platformIdentity fields are present even though platform-cicd's own docs allow
             # "" for unused ones - gitopsRepoUrl/appRepoUrl are always real here (NodeJSApplication
             # always provisions both repos), so there's nothing to leave empty.
-            <<- $xrName := .observed.composite.resource.metadata.name >>
             <<- $platformOwner := "jfillman" >>
-            <<- $tenantsRepo := "gitops-cluster-dev-tenants" >>
             <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s" $platformOwner $xrName >>
             <<- $appRepoUrl := printf "https://github.com/%s/%s" $platformOwner $xrName >>
+            <<- if $clusterOk >>
             apiVersion: repo.github.m.upbound.io/v1alpha1
             kind: RepositoryFile
             metadata:
@@ -121,6 +187,7 @@ spec:
                     githubOwner: <<$platformOwner>>
                     catalogNamespace: platform-catalog
                 commitMessage: <<printf "Onboard %s: add tenants/%s/identity.yaml for CICD pipeline onboarding" $xrName $xrName | toJson>>
+            <<- end >>
             ---
             # Empty, scaffolded gitops-<app-name> repo - idp/docs/service-catalog-design.md Item 1/2:
             # "gitops-<app-name> gets created here, empty, rather than by item 3 [ApplicationEnvironment]
@@ -174,10 +241,11 @@ spec:
                 commitMessage: "NodeJSApplication scaffold: README.md"
             ---
             # Commits a "shared"-mode SecretStore XR manifest into
-            # tenants/<app-name>/xr-requests/secretstore.yaml - picked up by kind-dev's own
-            # xr-requests ApplicationSet (gitops-cluster-dev/02-argocd-apps/xr-requests/),
-            # the SAME mechanism every other Bootstrap XR already goes through, applied
-            # directly (no Helm release needed) into app-<app-name>-cicd on kind-dev.
+            # tenants/<app-name>/xr-requests/secretstore.yaml - picked up by this app's own
+            # devCluster's xr-requests ApplicationSet (gitops-cluster-dev/02-argocd-apps/
+            # xr-requests/, for kind-dev), the SAME mechanism every other Bootstrap XR
+            # already goes through, applied directly (no Helm release needed) into
+            # app-<app-name>-cicd on that cluster.
             #
             # Real, deliberate correction of the original design (idp/docs/
             # service-catalog-design.md Item 8's second multi-cluster revision): secrets
@@ -192,13 +260,16 @@ spec:
             # created exactly once per app, so there's no "N siblings" ownership question
             # here at all, unlike ApplicationEnvironment's own copy of this same idea).
             #
-            # Why kind-dev specifically, unconditionally, no cluster field: NodeJSApplication
-            # is permanently centralized on kind-dev (Bootstrap-tier's own locality rule) -
-            # this is the app's OWN dev-cluster secrets store, always exactly one, matching
-            # xrds/secretstore.yaml's own "one shared environment for the dev cluster"
-            # scope (no per-env store on kind-dev - see that XRD's header for why).
-            <<- $xrName := .observed.composite.resource.metadata.name >>
-            <<- $tenantsRepo := "gitops-cluster-dev-tenants" >>
+            # spec.devCluster, not a hardcoded "kind-dev" (2026-08-18): this is the app's OWN
+            # dev-cluster secrets store, always exactly one, matching xrds/secretstore.yaml's
+            # own "one shared environment for the dev cluster" scope (no per-env store on a
+            # dev cluster - see that XRD's header for why). Which dev cluster is no longer a
+            # Bootstrap-tier-wide constant - spec.devCluster is real and required (the fleet
+            # now supports multiple dev clusters, an app pinned to exactly one) - $clusterOk/
+            # $tenantsRepo come from 00-devcluster-gate.yaml (same pipeline step), which also
+            # validates spec.devCluster live against the cluster registry before this
+            # resource renders at all.
+            <<- if $clusterOk >>
             apiVersion: repo.github.m.upbound.io/v1alpha1
             kind: RepositoryFile
             metadata:
@@ -217,12 +288,13 @@ spec:
                   apiVersion: catalog.idp.io/v1alpha1
                   kind: SecretStore
                   metadata:
-                    name: <<printf "%s-kind-dev" $xrName>>
+                    name: <<printf "%s-%s" $xrName $devCluster>>
                   spec:
                     appRef:
                       name: <<$xrName>>
-                    cluster: kind-dev
+                    cluster: <<$devCluster>>
                 commitMessage: <<printf "Onboard %s: add tenants/%s/xr-requests/secretstore.yaml" $xrName $xrName | toJson>>
+            <<- end >>
             ---
             # Src repo + Node.js boilerplate. Rendered by function-go-templating (source: Inline,
             # see ../composition.yaml/../build-composition.sh), using double-angle-bracket
@@ -487,7 +559,33 @@ spec:
             # redeclare-don't-couple convention applicationenvironment/templates/status/status.yaml
             # already established for extraResources - each pipeline step has its own template
             # execution scope.
+            #
+            # DevClusterReady (2026-08-18): redeclares the SAME ExtraResources requirement
+            # render-github-resources/00-devcluster-gate.yaml already declares in its own,
+            # separate pipeline step - this step gets none of that step's variables for free.
+            # Surfaces spec.devCluster's live registry validation as its own condition (same
+            # "structural backstop, refuse rather than partially succeed" reporting
+            # applicationenvironment's ClusterReady condition already established) - when this
+            # is False, CicdOnboarded staying False too is expected/correct, not a second bug:
+            # nothing in render-github-resources rendered at all (00-devcluster-gate.yaml's own
+            # $clusterOk gates cicd-identity-yaml.yaml and secretstore-xr.yaml both).
             <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $devCluster := $spec.devCluster >>
+            <<- $allExtra := .extraResources | default dict >>
+            <<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+            <<- $items := index $entry "items" | default list >>
+            <<- $clusterOk := false >>
+            <<- $clusterType := "" >>
+            <<- $cicdReady := "" >>
+            <<- if gt (len $items) 0 >>
+              <<- $cm := (index $items 0).resource >>
+              <<- $clusterType = $cm.data.type >>
+              <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+              <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+                <<- $clusterOk = true >>
+              <<- end >>
+            <<- end >>
             <<- $allObserved := .observed.resources | default dict >>
             <<- $identityRes := index $allObserved "cicd-identity-yaml" | default dict >>
             <<- $identityMR := index $identityRes "resource" | default dict >>
@@ -500,17 +598,45 @@ spec:
               <<- end >>
             <<- end >>
             apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ExtraResources
+            requirements:
+              devcluster-registry-entry:
+                apiVersion: v1
+                kind: ConfigMap
+                namespace: crossplane-system
+                matchName: <<$devCluster>>
+            ---
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
             kind: ClaimConditions
             conditions:
+            <<- if $clusterOk >>
+              - type: DevClusterReady
+                status: "True"
+                reason: DevClusterReady
+                message: >-
+                  <<$devCluster>> is a registered, cicdReady dev cluster - <<$xrName>> onboards
+                  onto it.
+                target: CompositeAndClaim
+            <<- else >>
+              - type: DevClusterReady
+                status: "False"
+                reason: DevClusterNotReady
+                message: >-
+                  spec.devCluster (<<$devCluster>>) doesn't resolve to a registered ConfigMap
+                  with type: dev and cicdReady: "true" in the cluster registry
+                  (gitops-cluster-dev/00-bootstrap/cluster-registry/) - no CICD-onboarding or
+                  secrets-infrastructure resources are rendered until it does, rather than
+                  partially succeeding against a cluster that may not exist or isn't ready yet.
+                target: CompositeAndClaim
+            <<- end >>
             <<- if $identityReady >>
               - type: CicdOnboarded
                 status: "True"
                 reason: CicdOnboarded
                 message: >-
-                  <<$xrName>>'s tenants/<<$xrName>>/identity.yaml committed to
-                  gitops-cluster-dev-tenants - platform-cicd's tenant-onboarding ApplicationSet
-                  picks it up on its next poll and stands up the real app-<<$xrName>>-cicd CICD
-                  pipeline.
+                  <<$xrName>>'s tenants/<<$xrName>>/identity.yaml committed to its devCluster's
+                  tenants repo - platform-cicd's tenant-onboarding ApplicationSet picks it up on
+                  its next poll and stands up the real app-<<$xrName>>-cicd CICD pipeline.
                 target: CompositeAndClaim
             <<- else >>
               - type: CicdOnboarded
@@ -518,10 +644,10 @@ spec:
                 reason: CicdOnboardingPending
                 message: >-
                   <<$xrName>>'s src/gitops repos and tenant identity are provisioned, and
-                  tenants/<<$xrName>>/identity.yaml has been committed to
-                  gitops-cluster-dev-tenants, but that RepositoryFile isn't Ready yet (provider-
-                  github still reconciling the commit). Resolves itself once it is - no XR edit
-                  needed.
+                  tenants/<<$xrName>>/identity.yaml has been committed to its devCluster's
+                  tenants repo, but that RepositoryFile isn't Ready yet (provider-github still
+                  reconciling the commit), or spec.devCluster isn't DevClusterReady yet (see
+                  that condition). Resolves itself once it is - no XR edit needed.
                 target: CompositeAndClaim
             <<- end >>
             ---
