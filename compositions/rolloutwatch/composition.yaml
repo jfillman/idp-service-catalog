@@ -37,4 +37,4 @@ spec:
         kind: Config
         gitopsOwner: jfillman
         gitopsBaseBranch: main
-        diagnosisJobImage: ghcr.io/jfillman/diagnosis-holmes-dispatch:v0.2.1
+        diagnosisJobImage: ghcr.io/jfillman/diagnosis-holmes-dispatch:v0.2.2

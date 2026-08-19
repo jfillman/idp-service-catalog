@@ -30,6 +30,7 @@ to add a new backend beyond Slack):
   NOTIFY_PAGERDUTY_ENABLED, PAGERDUTY_ROUTING_KEY (stub, not yet implemented)
 """
 
+import json
 import os
 import sys
 
@@ -167,7 +168,27 @@ def main():
     # Only reached once Holmes has actually returned a real result (raise_for_status
     # above already exited on a transport-level failure) - see notify.py's own
     # module docstring for why that ordering matters.
-    notify_all(rollout_name=ROLLOUT_NAME, rollout_namespace=ROLLOUT_NAMESPACE, result=result)
+    notify_all(rollout_name=ROLLOUT_NAME, rollout_namespace=ROLLOUT_NAMESPACE, result=_parse_diagnosis(result))
+
+
+def _parse_diagnosis(result: dict) -> dict:
+    """Real bug caught live: Holmes' /api/chat response envelope carries the
+    actual response_format JSON (root_cause/fix_repo/pr_url/summary) as a
+    STRING inside result['analysis'] - its own free-text answer field, which
+    happens to be valid JSON because response_format constrained the model's
+    output, not a nested object Holmes parses for you. notify_all() was
+    reading those keys straight off the top-level envelope (which has no such
+    keys - only 'analysis', 'conversation_history', token/cost stats, ...) and
+    silently got nothing every time, hence every Slack message showing "none
+    reported" for all three fields despite Holmes' own analysis text (and the
+    real PR) being right there.
+    """
+    analysis = result.get("analysis", "")
+    try:
+        return json.loads(analysis)
+    except (TypeError, ValueError) as e:
+        print(f"WARNING: could not parse Holmes' analysis field as JSON: {e}", file=sys.stderr)
+        return {}
 
 
 if __name__ == "__main__":
