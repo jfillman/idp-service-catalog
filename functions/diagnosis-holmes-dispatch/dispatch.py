@@ -32,6 +32,7 @@ to add a new backend beyond Slack):
 
 import json
 import os
+import re
 import sys
 
 import requests
@@ -193,10 +194,16 @@ def _parse_diagnosis(result: dict) -> dict:
     response_format isn't reliably honored - one run came back with a normal
     prose/markdown analysis instead of the constrained JSON, and the JSON
     parse above legitimately failed ("Expecting value: line 1 column 1"). The
-    old fallback (empty dict) meant the resulting notification carried NO
+    original fallback (empty dict) meant the resulting notification carried NO
     content at all, discarding a perfectly good investigation just because it
-    wasn't in the expected shape. Falls back to using the raw analysis text
-    as root_cause instead - degrades to "no fix_repo/PR link", not "nothing".
+    wasn't in the expected shape - and a root_cause-only fallback (the first
+    version of this fix) still silently dropped fix_repo/pr_url/pr_title, even
+    though Holmes DID open a real PR in that same run (confirmed live - it
+    still calls create_pull_request regardless of whether its final answer
+    honors response_format, those are independent). Best-effort regex-recovers
+    a PR URL straight out of the prose - Holmes reliably mentions the PR it
+    just opened somewhere in its own summary even off the JSON-schema path -
+    and derives fix_repo from that URL rather than leaving it unrecoverable.
     """
     analysis = result.get("analysis", "")
     try:
@@ -204,10 +211,17 @@ def _parse_diagnosis(result: dict) -> dict:
     except (TypeError, ValueError) as e:
         print(
             f"WARNING: Holmes did not return structured JSON in 'analysis' ({e}) - "
-            "falling back to its raw analysis text as root_cause",
+            "falling back to its raw analysis text, best-effort PR-URL recovery",
             file=sys.stderr,
         )
-        return {"root_cause": analysis} if analysis else {}
+        if not analysis:
+            return {}
+        fallback = {"root_cause": analysis}
+        pr_match = re.search(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/\d+", analysis)
+        if pr_match:
+            fallback["pr_url"] = pr_match.group(0)
+            fallback["fix_repo"] = pr_match.group(1)
+        return fallback
 
 
 if __name__ == "__main__":
