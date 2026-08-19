@@ -9,5 +9,5 @@ description: >-
   developer edits gitops-<app-name>/<cluster>/<env>/values.yaml directly, never this
   chart's templates.
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "1.0.0"

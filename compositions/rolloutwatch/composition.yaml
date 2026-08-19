@@ -1,0 +1,40 @@
+# Not a generated file, unlike this catalog's function-go-templating-based
+# Compositions (slo/, secretstore/, applicationenvironment/, nodejsapplication/) - this
+# one has a single pipeline step running a custom Python function
+# (function-rollout-watcher) that reads its own extra-resources requirements directly
+# via the protobuf SDK (response.require_resources/request.get_required_resource, NOT
+# function-go-templating's `kind: ExtraResources` meta-resource, which is specific to
+# that function's own template language) - see function-rollout-watcher/function/fn.py's
+# own header for the full mechanism and why no go-templating step is involved at all.
+#
+# gitopsOwner/diagnosisJobImage are the only two org-wide settings this Composition's
+# `input` carries - everything else (which app, which cluster/env, GitOps repo name,
+# manifest path) the function derives from the XR's own spec + the fixed platform
+# owner default baked into fn.py. See rolloutwatches.catalog.idp.io's own header for
+# why this XRD needs no ApplicationEnvironment/NodeJSApplication live lookup at all.
+#
+# function-auto-ready is NOT included here, deliberately - unlike SLO/PrometheusServiceLevel,
+# the only thing this Composition ever composes is a batch/v1 Job, which uses
+# Complete/Failed conditions, never Ready. function-rollout-watcher never marks it ready
+# either (same behavior the pre-redesign version already had) - a diagnosis Job is a
+# fire-and-forget side effect of watching, not something this XR's own Ready condition
+# should ever depend on.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: rolloutwatches.catalog.idp.io
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.idp.io/v1alpha1
+    kind: RolloutWatch
+  mode: Pipeline
+  pipeline:
+    - step: watch-and-diagnose
+      functionRef:
+        name: function-rollout-watcher
+      input:
+        apiVersion: rolloutwatcher.fn.crossplane.io/v1beta1
+        kind: Config
+        gitopsOwner: jfillman
+        gitopsBaseBranch: main
+        diagnosisJobImage: ghcr.io/jfillman/diagnosis-holmes-dispatch:v0.1.0

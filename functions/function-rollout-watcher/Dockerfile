@@ -14,15 +14,22 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
 # persisted across restarts.
 ENV PYTHONDONTWRITEBYTECODE=true
 
-# Use Hatch to build a wheel. The build stage must do this in a venv because
-# Debian doesn't have a hatch package, and it won't let you install one globally
-# using pip.
+# Build the wheel via pip's own PEP517 isolated build (which invokes
+# hatchling, our [build-system].requires backend, in its own throwaway venv
+# that pip manages itself) rather than `hatch build` directly. Hit a real,
+# reproducible bug here: hatch 1.16.5's own build-env creation
+# (hatch/env/virtual.py's activate(), which now goes through an "expose_uv"
+# path) silently fails to produce a usable venv on this Debian 12 base image -
+# `Creating environment: hatch-build` prints, then immediately "OSError:
+# Unable to locate executables directory" - even though a plain `python3 -m
+# venv` in the same image works fine, confirmed directly. Sidesteps hatch's
+# own environment-management code entirely; hatchling still does the actual
+# building either way, since pyproject.toml's build-system.requires names it.
 WORKDIR /build
 RUN --mount=target=. \
     --mount=type=cache,target=/root/.cache/pip \
     python3 -m venv /venv/build \
-    && /venv/build/bin/pip install hatch \
-    && /venv/build/bin/hatch build -t wheel /whl
+    && /venv/build/bin/pip wheel . --no-deps --wheel-dir /whl
 
 # Create a fresh venv and install only the function wheel into it.
 RUN --mount=type=cache,target=/root/.cache/pip \

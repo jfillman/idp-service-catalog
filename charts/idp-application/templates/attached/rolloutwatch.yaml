@@ -1,0 +1,27 @@
+{{/*
+AI-triage redesign (2026-08-18) - one RolloutWatch XR per release, unconditionally
+whenever this release has a workload (idp-application.hasRollout), same treatment as
+ServiceMonitor: not a developer-selected components:/slos: entry, wired in
+automatically. metadata.name is deliberately the SAME as the Rollout's own
+(workload/rollout.yaml) and this XR lives in the SAME namespace - the RolloutWatch XRD's
+own Composition relies on that identity to find the right Rollout via an extra-resources
+match_name lookup (no separate "which rollout" field needed). See
+idp-service-catalog's rolloutwatches.catalog.idp.io XRD/Composition for the rest of the
+mechanism.
+*/}}
+{{- if eq (include "idp-application.hasRollout" .) "true" }}
+apiVersion: {{ .Values.attachedResourceApiVersion }}
+kind: RolloutWatch
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    platform.io/subcomponent: attached-rollout-watch
+spec:
+  environmentRef:
+    name: {{ include "idp-application.environmentRef" . }}
+  appName: {{ .Values.appName }}
+  cluster: {{ .Values.cluster }}
+  env: {{ .Values.envName }}
+{{- end }}

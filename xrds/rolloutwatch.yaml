@@ -1,0 +1,99 @@
+# AI-triage redesign (2026-08-18) - Attached-tier XRD, same shape/conventions as
+# slos.catalog.idp.io (see that XRD's own header). Wraps function-rollout-watcher
+# (extracted from the ai-rollout prototype - see that function's own README for the
+# HolmesGPT redesign history).
+#
+# apiextensions.crossplane.io/v2, Namespaced, same as every other Attached-tier XRD -
+# this catalog's general "real namespaced-XR support" reasoning applies identically
+# here, not repeated per-XRD.
+#
+# idp-application's own chart renders exactly one of these per release, unconditionally
+# whenever rollout: is set (same treatment as ServiceMonitor - see
+# charts/idp-application/templates/attached/rolloutwatch.yaml), metadata.name equal to
+# .Values.appName - the SAME name the chart's own Rollout gets (workload/rollout.yaml),
+# in the SAME namespace. That's deliberate, not incidental: function-rollout-watcher's
+# Composition never gets told a separate "which Rollout" identity - it derives the
+# Rollout it should watch (extra-resources match_name) from THIS XR's own
+# metadata.name/metadata.namespace being identical to the Rollout's.
+#
+# Deployed per cluster (Attached-tier locality - idp/docs/service-catalog-design.md §0),
+# same as SLO - Crossplane must be running on whichever cluster actually hosts the
+# Rollout this watches, since extra-resources lookups never cross clusters. Unlike SLO,
+# this has no ApplicationEnvironment dependency beyond environmentRef being
+# labeling/audit only (same convention every Attached-tier XRD already uses) - the
+# Composition derives GitOps/source repo coordinates deterministically from
+# spec.appName/cluster/env instead (see function-rollout-watcher's own fn.py header for
+# why a live cross-cluster NodeJSApplication lookup can't work here).
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: rolloutwatches.catalog.idp.io
+spec:
+  group: catalog.idp.io
+  names:
+    kind: RolloutWatch
+    plural: rolloutwatches
+    singular: rolloutwatch
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - environmentRef
+                - appName
+                - cluster
+                - env
+              properties:
+                environmentRef:
+                  type: object
+                  description: >-
+                    Names the owning ApplicationEnvironment XR (app+cluster+env
+                    identity) this watcher belongs to. Labeling/audit only - not a
+                    live lookup, same convention as every other Attached-tier XRD
+                    in this catalog.
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+
+                appName:
+                  type: string
+                  description: >-
+                    The app this watches - also idp-application's own release name,
+                    the Rollout's metadata.name in this XR's own namespace (extra-
+                    resources match_name), and the GitHub repo name (gitops-<appName>
+                    / <appName>) the Composition derives GitOps/source coordinates
+                    from. Always equal to this XR's own metadata.name in practice
+                    (idp-application's chart sets both identically) but declared
+                    explicitly rather than re-derived from metadata.name, so the
+                    Composition never has to assume that invariant holds.
+                  minLength: 1
+
+                cluster:
+                  type: string
+                  description: >-
+                    Which cluster this app is deployed to - e.g. "kind-prod". Used,
+                    together with env, to derive the GitOps manifest path
+                    (<cluster>/<env>/values.yaml) a dispatched diagnosis Job opens
+                    its fix PR against.
+                  minLength: 1
+
+                env:
+                  type: string
+                  description: >-
+                    Which environment within that cluster - e.g. "prod"/"staging".
+                    Same DNS-1123-pattern convention as ApplicationEnvironment's own
+                    spec.env (not repeated here as a literal pattern - this field is
+                    only ever chart-templated from idp-application's own .Values.envName,
+                    which ApplicationEnvironment's XRD already validates upstream).
+                  minLength: 1
+          required: ["spec"]

@@ -1,22 +1,43 @@
-"""function-rollout-watcher (redesigned)
+"""function-rollout-watcher (extra-resources redesign)
 
-This function no longer renders any app resources — the Rollout, Service,
-and AnalysisTemplate are now rendered by function-go-templating (step 1 of
-the pipeline) from separate files under crossplane/composition/templates/.
+Second redesign of this function. The first (see git history / this repo's
+README) swapped the diagnosis agent for a thin HolmesGPT dispatch Job. This
+one swaps *how the Rollout is observed*.
 
-This function does exactly two things:
-  1. Watches the *observed* live status of the Rollout that step 1 rendered.
+Originally this function watched a Rollout composed by step 1 of its own
+pipeline (function-go-templating, ported from the ai-rollout prototype). But
+the real deployment path that got built since — the `idp-application` Helm
+chart, deployed per cluster by ArgoCD — never gives Crossplane a hand in
+creating the Rollout at all. There's no composed resource for this function
+to read.
+
+So this function now runs alone in a single-step Composition pipeline (see
+compositions/rolloutwatch/composition.yaml), on a `RolloutWatch` XR that
+`idp-application` renders unconditionally (same treatment as ServiceMonitor)
+alongside the real Rollout. It does exactly two things:
+  1. Requests the live, Helm-created Rollout as an extra/required resource
+     (matched by name + namespace — same name as this XR, same namespace,
+     idp-application's own naming convention) and reads its *observed*
+     status from there.
   2. The first time it's Degraded/Error for a given revision (tracked via
-     the XR's own status.lastDiagnosisRevision), renders a Kubernetes Job
-     that runs the AI diagnosis agent (see ../../diagnosis-job) and writes
-     status back onto the XR.
+     the XR's own status.lastDiagnosisRevision), composes a Kubernetes Job
+     that dispatches to HolmesGPT (see ../../diagnosis-holmes-dispatch) and
+     writes status back onto the XR.
 
-Both the Rollout (read here) and the Job (rendered here) are PLAIN native
-Kubernetes resources now, not provider-kubernetes `Object` wrappers —
-Crossplane v2 supports composing arbitrary native resources directly for a
-namespaced XR, which is what removed most of this file's previous
-complexity (no more wrap_object(), no more .status.atProvider.manifest
-unwrapping).
+The Job (composed here) is a PLAIN native Kubernetes resource — Crossplane
+v2 supports composing arbitrary native resources directly for a namespaced
+XR. The Rollout is never composed at all now, only read.
+
+This runs per cluster (wherever the app it's watching is actually deployed),
+not centralized — see idp/docs/service-catalog-design.md §0's tier-locality
+design. Because of that, this function can no longer look up gitops/src repo
+coordinates from a per-XR annotation the way the ai-rollout-derived version
+did (that mechanism assumed a single shared repo of manifests and was never
+wired to the real system). Instead it derives them deterministically from
+spec.appName/cluster/env, mirroring exactly what ApplicationEnvironment's own
+Composition already computes for the same app (see
+resolve_gitops_config/resolve_src_config below) — no live cross-cluster
+lookup needed, no extra annotations for a developer to remember.
 
 NOTE ON SDK ERGONOMICS: this follows the patterns shown in the official
 "Write a Composition Function in Python" guide
@@ -31,31 +52,21 @@ current exact API.
 import datetime
 
 import grpc
-from crossplane.function import logging, response
+from crossplane.function import logging, request, response
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
 from crossplane.function.proto.v1 import run_function_pb2_grpc as grpcv1
 
 DEGRADED_PHASES = {"Degraded", "Error"}
+ROLLOUT_REQUIREMENT_NAME = "rollout"
 
-# Per-XR overrides for where the diagnosis agent should open its fix PR
-# against the GITOPS MANIFEST repo (i.e. this XR's own source of truth).
-# Falls back to the Composition's function `input` (an org-wide default
-# GitOps repo) when not set on a given XR — most apps living in a shared
-# monorepo need none of these; an app in its own repo sets owner/repo.
-ANNOTATION_GITOPS_OWNER = "gitops.example.org/owner"
-ANNOTATION_GITOPS_REPO = "gitops.example.org/repo"
-ANNOTATION_GITOPS_BASE_BRANCH = "gitops.example.org/base-branch"
-ANNOTATION_GITOPS_MANIFEST_PATH = "gitops.example.org/manifest-path"
-
-# Separate set of overrides for where the app's SOURCE CODE lives — this
-# can be a different repo/path than the GitOps manifests (polyrepo) or the
-# same one (monorepo). Falls back to the resolved gitops.* coordinates when
-# unset, so leaving these unset just means "source lives in the same repo
-# as the manifests" — a monorepo needs zero extra annotations.
-ANNOTATION_SRC_OWNER = "src.example.org/owner"
-ANNOTATION_SRC_REPO = "src.example.org/repo"
-ANNOTATION_SRC_BASE_BRANCH = "src.example.org/base-branch"
-ANNOTATION_SRC_PATH = "src.example.org/path"
+# The platform's fixed GitHub owner — same constant NodeJSApplication's own
+# Composition writes into every onboarded app's identity.yaml (see that
+# Composition's own header for why this isn't a per-app field: `owner` is a
+# ProviderConfig-wide setting, not something an app can vary). Can be
+# overridden via the Composition's function `input` (cfg.gitopsOwner) if this
+# ever needs to differ per cluster, but every real onboarding today uses this
+# one value.
+DEFAULT_GITOPS_OWNER = "jfillman"
 
 
 def safe_get(d, *keys, default=None):
@@ -76,27 +87,37 @@ def safe_get(d, *keys, default=None):
     return cur
 
 
-def resolve_gitops_config(xr, cfg):
-    """Per-XR annotations override the Composition input's org-wide defaults."""
-    annotations = safe_get(xr, "metadata", "annotations", default={}) or {}
+def resolve_gitops_config(app_name, cluster, env, cfg):
+    """Deterministic GitOps manifest-repo coordinates for app_name, matching
+    exactly what ApplicationEnvironment's own Composition computes when it
+    bootstraps this same app's <cluster>/<env>/values.yaml (see
+    compositions/applicationenvironment's render-github-resources step) —
+    owner is the platform's fixed GitHub owner (cfg.gitopsOwner can override
+    it, but every real onboarding uses the default), repo is always
+    `gitops-<appName>`, base branch is always "main" (NodeJSApplication scaffolds
+    every gitops-<appName> repo with a main branch and never offers another),
+    and the manifest path is always <cluster>/<env>/values.yaml.
+    """
+    owner = safe_get(cfg, "gitopsOwner", default=DEFAULT_GITOPS_OWNER)
     return {
-        "owner": safe_get(annotations, ANNOTATION_GITOPS_OWNER) or safe_get(cfg, "gitopsOwner", default=""),
-        "repo": safe_get(annotations, ANNOTATION_GITOPS_REPO) or safe_get(cfg, "gitopsRepoName", default=""),
-        "base_branch": safe_get(annotations, ANNOTATION_GITOPS_BASE_BRANCH) or safe_get(cfg, "gitopsBaseBranch", default="main"),
-        "manifest_path": safe_get(annotations, ANNOTATION_GITOPS_MANIFEST_PATH) or safe_get(cfg, "gitopsManifestPath", default=""),
+        "owner": owner,
+        "repo": f"gitops-{app_name}",
+        "base_branch": safe_get(cfg, "gitopsBaseBranch", default="main"),
+        "manifest_path": f"{cluster}/{env}/values.yaml",
     }
 
 
-def resolve_src_config(xr, gitops):
-    """Per-XR annotations override; unset falls back to the already-resolved
-    gitops repo coordinates — a monorepo (app source alongside its
-    manifests) needs zero src.example.org annotations at all."""
-    annotations = safe_get(xr, "metadata", "annotations", default={}) or {}
+def resolve_src_config(app_name, gitops):
+    """The app's own source repo — same owner/base branch as the GitOps repo
+    (NodeJSApplication always creates both under the same platform owner),
+    named after the app itself (not gitops-<appName>), root path (this
+    platform's NodeJSApplication scaffold is always a single-app monorepo —
+    there's no polyrepo/subdirectory case in the real system to resolve)."""
     return {
-        "owner": safe_get(annotations, ANNOTATION_SRC_OWNER) or gitops["owner"],
-        "repo": safe_get(annotations, ANNOTATION_SRC_REPO) or gitops["repo"],
-        "base_branch": safe_get(annotations, ANNOTATION_SRC_BASE_BRANCH) or gitops["base_branch"],
-        "path": safe_get(annotations, ANNOTATION_SRC_PATH, default=""),
+        "owner": gitops["owner"],
+        "repo": app_name,
+        "base_branch": gitops["base_branch"],
+        "path": "",
     }
 
 
@@ -174,38 +195,35 @@ class FunctionRunner(grpcv1.FunctionRunnerService):
         xr = req.observed.composite.resource
         xr_name = safe_get(xr, "metadata", "name")
         xr_namespace = safe_get(xr, "metadata", "namespace")
+        spec = safe_get(xr, "spec", default={}) or {}
+        app_name = safe_get(spec, "appName") or xr_name
+        cluster = safe_get(spec, "cluster", default="")
+        env = safe_get(spec, "env", default="")
 
         cfg = req.input if req.input else {}
         diagnosis_image = safe_get(cfg, "diagnosisJobImage", default="diagnosis-job:latest")
 
         # --- Watch the observed (live) Rollout status ---
-        # Step 1 (function-go-templating) already rendered the Rollout as a
-        # plain native resource named after the XR, tracked under the
-        # resource-map key "rollout" (matching its
-        # gotemplating.fn.crossplane.io/composition-resource-name
-        # annotation in templates/rollout.yaml).
-        phase = None
-        revision = None
-        if "rollout" in req.observed.resources:
-            observed_rollout = req.observed.resources["rollout"].resource
-            phase = safe_get(observed_rollout, "status", "phase")
-            revision = safe_get(observed_rollout, "status", "currentPodHash")
-
-        # function-auto-ready (the pipeline's last step) only marks a
-        # resource ready if it finds a `status.conditions` entry of
-        # `type: Ready, status: "True"`. Neither of these will ever satisfy
-        # that: Argo Rollout uses its own condition vocabulary (Healthy /
-        # Available / Progressing / Completed, never "Ready"), and
-        # AnalysisTemplate is a static definition with no controller ever
-        # writing status/conditions to it at all. Mark them explicitly here,
-        # where we already have domain knowledge of what "ready" means for
-        # each. This runs after function-go-templating rendered them, and
-        # response.to(req) carries their .resource forward from req.desired,
-        # so setting .ready alone (without touching .resource) is enough.
-        if "analysistemplate" in req.observed.resources:
-            rsp.desired.resources["analysistemplate"].ready = fnv1.Ready.READY_TRUE
-        if phase == "Healthy":
-            rsp.desired.resources["rollout"].ready = fnv1.Ready.READY_TRUE
+        # idp-application's Helm chart renders the real Rollout directly
+        # (never through this Composition) with the same name as this XR and
+        # in the same namespace — see charts/idp-application/templates/
+        # workload/rollout.yaml. Always declare this requirement every
+        # reconcile (not just once) — Crossplane treats requirements as
+        # stable once they stop changing between calls, and the first
+        # reconcile after this XR is created won't have req.required_resources
+        # populated yet, same "not found yet, retry next reconcile" shape
+        # already used elsewhere in this catalog for extra-resources lookups.
+        response.require_resources(
+            rsp,
+            ROLLOUT_REQUIREMENT_NAME,
+            api_version="argoproj.io/v1alpha1",
+            kind="Rollout",
+            match_name=app_name,
+            namespace=xr_namespace,
+        )
+        observed_rollout = request.get_required_resource(req, ROLLOUT_REQUIREMENT_NAME)
+        phase = safe_get(observed_rollout, "status", "phase") if observed_rollout else None
+        revision = safe_get(observed_rollout, "status", "currentPodHash") if observed_rollout else None
 
         prev_status = safe_get(xr, "status", default={}) or {}
         last_handled_revision = safe_get(prev_status, "lastDiagnosisRevision")
@@ -234,17 +252,10 @@ class FunctionRunner(grpcv1.FunctionRunnerService):
             new_status["rolloutPhase"] = phase
 
         if phase in DEGRADED_PHASES and revision and revision != last_handled_revision:
-            job_name = f"diagnosis-{xr_name}-{revision}"[:63]
-            gitops = resolve_gitops_config(xr, cfg)
-            src = resolve_src_config(xr, gitops)
-            if not gitops["owner"] or not gitops["repo"]:
-                log.warning(
-                    "gitops owner/repo unresolved; dispatching diagnosis job anyway but it will "
-                    "likely fail at the GitHub-PR step. Set annotations %s / %s on the XR, or "
-                    "gitopsOwner/gitopsRepoName in the Composition's function input.",
-                    ANNOTATION_GITOPS_OWNER, ANNOTATION_GITOPS_REPO,
-                )
-            job_manifest = build_diagnosis_job(job_name, xr_namespace, diagnosis_image, xr_name, gitops, src)
+            job_name = f"diagnosis-{app_name}-{revision}"[:63]
+            gitops = resolve_gitops_config(app_name, cluster, env, cfg)
+            src = resolve_src_config(app_name, gitops)
+            job_manifest = build_diagnosis_job(job_name, xr_namespace, diagnosis_image, app_name, gitops, src)
             rsp.desired.resources[f"diagnosis-job-{revision}"].resource.update(job_manifest)
             new_status["lastDiagnosisRevision"] = revision
             new_status["lastDiagnosisJob"] = job_name
