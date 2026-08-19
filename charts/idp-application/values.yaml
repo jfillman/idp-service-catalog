@@ -103,28 +103,22 @@ serviceAccount:
   imagePullSecrets: []
   # [{name: <existing-secret-name>}] - attached to the ServiceAccount once, inherited
   # by every pod (Rollout/Job/CronJob) via serviceAccountName, rather than repeating
-  # imagePullSecrets on each pod spec separately. Merged with registryCredentials'
-  # own generated secret below (if enabled), so an app can list additional
-  # pre-existing pull secrets here alongside it.
+  # imagePullSecrets on each pod spec separately. Merged with the always-on
+  # registry-credentials Secret (see serviceaccount.yaml), so an app can list
+  # additional pre-existing pull secrets here alongside it.
 
-# Resolves the "Real, not-yet-resolved question for whoever builds that mechanism"
-# this file used to flag right above serviceAccount.imagePullSecrets: a pod whose
-# image lives in a private registry (ghcr.io/<owner> packages default to private on
-# first push) can't actually pull it without one. Real 401 hit live on checkout-api's
-# dev Rollout. Off by default (existing releases that already provision their own
-# pull secret, or use a public registry, get zero behavior change) - set
-# registryCredentials.enabled: true and this chart creates one ExternalSecret pulling
-# from the SAME shared platform-secret-store ClusterSecretStore/registry-credentials
-# key platform-cicd-app's own registry-credentials-external-secret.yaml already uses
-# (cluster-scoped, so any namespace/ArgoCD-instance can reference it by name - no new
-# plumbing needed on the ESO/backend side), and wires it onto the ServiceAccount
-# automatically.
-registryCredentials:
-  enabled: false
-  secretStore:
-    name: platform-secret-store
-    kind: ClusterSecretStore
-  remoteKey: registry-credentials
+# This cluster's own platform-cicd Infisical-backed ClusterSecretStore
+# (platform-cicd-control-plane's own on kind-dev; hand-authored the same way on every
+# upper cluster - see docs/admin/secrets-management.md). Used by
+# release-tracking/relay-token-external-secret.yaml. registry-credentials used to be
+# an opt-in ExternalSecret this chart rendered per app from this same store - it's now
+# disseminated automatically to every namespace via a ClusterExternalSecret
+# platform-cicd's control-plane chart renders, so this chart no longer needs its own
+# registry-credentials template (see serviceaccount.yaml, which now unconditionally
+# references that Secret's name).
+platformSecretStore:
+  name: platform-secret-store
+  kind: ClusterSecretStore
 
 # --- Embedded: workload (Argo Rollout) --------------------------------------
 #
