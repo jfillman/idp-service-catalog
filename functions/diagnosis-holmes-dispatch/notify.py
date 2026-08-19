@@ -22,6 +22,7 @@ Slack's already are. See PagerDutyNotifier below for the shape a stub takes.
 import os
 import sys
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 
 import requests
 
@@ -33,37 +34,93 @@ class Notifier(ABC):
     @abstractmethod
     def send(self, *, rollout_name: str, rollout_namespace: str, result: dict) -> None:
         """result is Holmes' own response_format JSON: root_cause, fix_repo,
-        pr_url, summary - see dispatch.py's RESPONSE_FORMAT."""
+        pr_url, pr_title, pr_description, summary - see dispatch.py's
+        RESPONSE_FORMAT."""
+
+
+_SLACK_TEXT_LIMIT = 2800  # Slack's real cap is 3000 chars/text object; margin for the box's own fencing/label
+
+
+def _truncate(text: str, limit: int = _SLACK_TEXT_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n… (truncated)"
 
 
 class SlackNotifier(Notifier):
-    """POSTs to a Slack Incoming Webhook. channel is optional - only takes
-    effect if the workspace's webhook app allows overriding its configured
-    default channel; Slack silently ignores it otherwise, so an empty/wrong
-    channel here degrades to "posts to the webhook's own default channel",
-    not a hard failure."""
+    """POSTs to a Slack Incoming Webhook, Block Kit, following platform-cicd's
+    own docs/admin/design-language.md exactly rather than inventing a new
+    style: attachments[0].color for the accent bar (muted red, #B91C1C -
+    always here, never the blue "success" variant, since a diagnosis dispatch
+    only ever happens because a Rollout already went Degraded/Error - there's
+    no "success" case for this notifier to distinguish), a single `⚠` on the
+    header, same field vocabulary (App / App Namespace / Repo), verbose
+    free-text (root cause, PR title+description) fenced in a code-block
+    section rather than crammed into a field - Slack fields aren't meant for
+    paragraphs and visually flatten them.
+
+    channel is optional - only takes effect if the workspace's webhook app
+    allows overriding its configured default channel; Slack silently ignores
+    it otherwise, so an empty/wrong channel here degrades to "posts to the
+    webhook's own default channel", not a hard failure.
+    """
+
+    COLOR = "#B91C1C"
 
     def __init__(self, webhook_url: str, channel: str = ""):
         self.webhook_url = webhook_url
         self.channel = channel
 
     def send(self, *, rollout_name: str, rollout_namespace: str, result: dict) -> None:
+        fix_repo = result.get("fix_repo")
+        root_cause = result.get("root_cause")
         pr_url = result.get("pr_url")
-        lines = [
-            f"*AI-triage diagnosis complete* — `{rollout_namespace}/{rollout_name}`",
-            f"*Root cause:* {result.get('root_cause') or '(none reported)'}",
-            f"*Fix repo:* {result.get('fix_repo') or '(none reported)'}",
-            f"*PR:* {pr_url}" if pr_url else "*PR:* none opened",
+        pr_title = result.get("pr_title")
+        pr_description = result.get("pr_description")
+
+        fields = [
+            self._field("App", rollout_name),
+            self._field("App Namespace", rollout_namespace),
         ]
+        if fix_repo:
+            fields.append(self._field("Repo", f"<https://github.com/{fix_repo}|{fix_repo}>"))
         summary = result.get("summary")
         if summary:
-            lines.append(summary)
-        payload = {"text": "\n".join(lines)}
+            fields.append(self._field("Summary", summary))
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"⚠ {rollout_name} · AI-Triage Diagnosis Complete", "emoji": True},
+            },
+            {"type": "section", "fields": fields},
+        ]
+
+        if root_cause:
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*Root Cause*"}})
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"```{_truncate(root_cause)}```"}})
+
+        if pr_url:
+            title_line = f"*<{pr_url}|{pr_title}>*" if pr_title else f"*<{pr_url}|View PR>*"
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": title_line}})
+            if pr_description:
+                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"```{_truncate(pr_description)}```"}})
+        else:
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*PR:* none opened"}})
+
+        footer = f"AI-triage · {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": footer}]})
+
+        payload = {"attachments": [{"color": self.COLOR, "blocks": blocks}]}
         if self.channel:
             payload["channel"] = self.channel
 
         resp = requests.post(self.webhook_url, json=payload, timeout=15)
         resp.raise_for_status()
+
+    @staticmethod
+    def _field(label: str, value: str) -> dict:
+        return {"type": "mrkdwn", "text": f"*{label}*\n{value}"}
 
 
 class PagerDutyNotifier(Notifier):

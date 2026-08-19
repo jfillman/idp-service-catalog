@@ -115,6 +115,10 @@ Your job, in order:
         rather than the other one.
      b. The fix, and why it resolves the root cause
      c. Any residual risk or things a human reviewer should double check
+   - When you report back (response_format below), pr_title/pr_description
+     must be the EXACT title/body you passed to create_pull_request - not a
+     re-summarized or shortened version. They're shown verbatim to a human
+     downstream who never sees this conversation, only your final answer.
 
 Be concrete. Cite the actual pod names, event reasons, log lines, and
 config values you observed rather than speculating. If the evidence is
@@ -133,9 +137,11 @@ RESPONSE_FORMAT = {
                 "root_cause": {"type": "string"},
                 "fix_repo": {"type": "string", "description": "owner/repo the fix PR targets"},
                 "pr_url": {"type": ["string", "null"]},
+                "pr_title": {"type": ["string", "null"], "description": "Exact title passed to create_pull_request - null if no PR was opened"},
+                "pr_description": {"type": ["string", "null"], "description": "Exact body passed to create_pull_request - null if no PR was opened"},
                 "summary": {"type": "string"},
             },
-            "required": ["root_cause", "fix_repo", "pr_url", "summary"],
+            "required": ["root_cause", "fix_repo", "pr_url", "pr_title", "pr_description", "summary"],
             "additionalProperties": False,
         },
     },
