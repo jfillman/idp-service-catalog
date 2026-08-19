@@ -121,6 +121,25 @@ def resolve_src_config(app_name, gitops):
     }
 
 
+def build_diagnosis_service_account():
+    """The `diagnosis-dispatch` ServiceAccount the diagnosis Job runs as.
+
+    Real bug caught live on kind-prod: neither this function nor the original
+    ai-rollout-derived Composition it was extracted from ever actually
+    created this ServiceAccount anywhere - the Job's pod spec just assumed it
+    existed, and the first real dispatch on kind-prod failed with
+    "serviceaccount diagnosis-dispatch not found". Composed unconditionally
+    (every reconcile, not just when a diagnosis Job is about to be dispatched)
+    so it's always there by the time it's needed. Carries zero RBAC grants -
+    see build_diagnosis_job's own docstring for why.
+    """
+    return {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {"name": "diagnosis-dispatch"},
+    }
+
+
 def build_diagnosis_job(job_name, xr_namespace, diagnosis_image, xr_name, gitops, src):
     """A plain, native batch/v1 Job — no provider-kubernetes wrapping needed.
 
@@ -202,6 +221,11 @@ class FunctionRunner(grpcv1.FunctionRunnerService):
 
         cfg = req.input if req.input else {}
         diagnosis_image = safe_get(cfg, "diagnosisJobImage", default="diagnosis-job:latest")
+
+        # Always compose the diagnosis Job's ServiceAccount, whether or not a
+        # diagnosis is happening this reconcile - see build_diagnosis_service_account's
+        # own docstring.
+        rsp.desired.resources["diagnosis-dispatch-sa"].resource.update(build_diagnosis_service_account())
 
         # --- Watch the observed (live) Rollout status ---
         # idp-application's Helm chart renders the real Rollout directly
