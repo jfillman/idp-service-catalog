@@ -123,6 +123,10 @@ def _try_send(notifier: Notifier, rollout_name: str, rollout_namespace: str, res
         notifier.send(rollout_name=rollout_name, rollout_namespace=rollout_namespace, result=result)
     except Exception as e:  # noqa: BLE001 - deliberately broad, see notify_all's own docstring
         print(f"WARNING: {type(notifier).__name__} notification failed: {e}", file=sys.stderr)
+    else:
+        # Success was previously silent - indistinguishable in the Job's own logs
+        # from "this backend was never enabled" without cross-referencing env vars.
+        print(f"{type(notifier).__name__} notification sent", file=sys.stderr)
 
 
 def _env_bool(name: str) -> bool:
