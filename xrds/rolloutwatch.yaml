@@ -96,4 +96,19 @@ spec:
                     only ever chart-templated from idp-application's own .Values.envName,
                     which ApplicationEnvironment's XRD already validates upstream).
                   minLength: 1
+            status:
+              type: object
+              description: >-
+                Written by function-rollout-watcher every reconcile - see that
+                function's own fn.py for the exact meaning of each field. Same
+                shape the ai-rollout-derived version of this function already used.
+              properties:
+                rolloutPhase:
+                  type: string
+                lastDiagnosisRevision:
+                  type: string
+                lastDiagnosisJob:
+                  type: string
+                lastDiagnosisTime:
+                  type: string
           required: ["spec"]
