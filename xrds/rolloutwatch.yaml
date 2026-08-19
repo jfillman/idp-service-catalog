@@ -96,6 +96,34 @@ spec:
                     only ever chart-templated from idp-application's own .Values.envName,
                     which ApplicationEnvironment's XRD already validates upstream).
                   minLength: 1
+
+                notifications:
+                  type: object
+                  description: >-
+                    Where a completed diagnosis gets reported, beyond the XR's own
+                    status/events (function-rollout-watcher's own README) and
+                    whatever HolmesGPT did on its own (GitHub PR, if it opened one).
+                    Optional and omitted entirely by idp-application's chart unless a
+                    developer set notifications.slack.enabled: true in their
+                    values.yaml - same shape/opt-in convention as platform-cicd's own
+                    cicd.yaml notifications.slack.{enabled,channel}, deliberately not
+                    a new one. See that chart's own notify-external-secret.yaml for
+                    where the actual webhook URL comes from (never a plain spec
+                    field - it's a credential).
+                  properties:
+                    slack:
+                      type: object
+                      required:
+                        - enabled
+                      properties:
+                        enabled:
+                          type: boolean
+                        channel:
+                          type: string
+                          description: >-
+                            Optional Slack channel override (e.g. "#your-channel") -
+                            only takes effect if the workspace's webhook app allows
+                            overriding its own configured default channel.
             status:
               type: object
               description: >-

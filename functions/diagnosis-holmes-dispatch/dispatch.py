@@ -22,12 +22,20 @@ Optional:
   HOLMES_URL   - defaults to the in-cluster HolmesGPT Service
   HOLMES_MODEL - model override passed to Holmes; unset uses Holmes' own
                  configured default (claude-sonnet)
+
+Also optional - notification backends, sent once a real Holmes result comes
+back (see notify.py's own module docstring for the full contract, and for how
+to add a new backend beyond Slack):
+  NOTIFY_SLACK_ENABLED, NOTIFY_SLACK_CHANNEL, SLACK_WEBHOOK_URL
+  NOTIFY_PAGERDUTY_ENABLED, PAGERDUTY_ROUTING_KEY (stub, not yet implemented)
 """
 
 import os
 import sys
 
 import requests
+
+from notify import notify_all
 
 def env(name: str, default: str = "", required: bool = False) -> str:
     val = os.environ.get(name, default)
@@ -155,6 +163,11 @@ def main():
 
     print("=== HOLMES DIAGNOSIS ===")
     print(result)
+
+    # Only reached once Holmes has actually returned a real result (raise_for_status
+    # above already exited on a transport-level failure) - see notify.py's own
+    # module docstring for why that ordering matters.
+    notify_all(rollout_name=ROLLOUT_NAME, rollout_namespace=ROLLOUT_NAMESPACE, result=result)
 
 
 if __name__ == "__main__":

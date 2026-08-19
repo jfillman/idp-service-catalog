@@ -140,7 +140,7 @@ def build_diagnosis_service_account():
     }
 
 
-def build_diagnosis_job(job_name, xr_namespace, diagnosis_image, xr_name, gitops, src):
+def build_diagnosis_job(job_name, xr_namespace, diagnosis_image, xr_name, gitops, src, notifications):
     """A plain, native batch/v1 Job — no provider-kubernetes wrapping needed.
 
     kind-dev redesign: this Job no longer runs its own Claude tool-use loop.
@@ -151,7 +151,40 @@ def build_diagnosis_job(job_name, xr_namespace, diagnosis_image, xr_name, gitops
     (Holmes holds its own standing credentials, this Job holds none), and the
     ServiceAccount below carries zero RBAC grants — the dispatcher makes one
     HTTP call, it never touches the Kubernetes API directly.
+
+    notifications (2026-08-19): dict with an optional "slack" key ({"channel":
+    str}), already resolved from the XR's own spec.notifications by the caller -
+    this function only builds env vars from it, no XR/spec knowledge here. The
+    webhook URL itself is deliberately never passed as a plain value - it's a
+    credential, sourced via secretKeyRef from notify-secrets (idp-application's
+    chart renders that ExternalSecret whenever notifications.slack.enabled is
+    set - see charts/idp-application/templates/config/notify-external-secret.yaml).
+    Job creation still succeeds even if that Secret hasn't synced yet (unlike the
+    ServiceAccount case above, a secretKeyRef env var only blocks the *container*
+    from starting, with a clear "secret not found" pod event - not resource
+    creation itself) - see diagnosis-holmes-dispatch/notify.py for how a missing
+    key degrades to a logged skip rather than crashing the whole dispatch.
     """
+    env = [
+        {"name": "ROLLOUT_NAME", "value": xr_name},
+        {"name": "ROLLOUT_NAMESPACE", "value": xr_namespace},
+        {"name": "GITOPS_OWNER", "value": gitops["owner"]},
+        {"name": "GITOPS_REPO", "value": gitops["repo"]},
+        {"name": "GITOPS_BASE_BRANCH", "value": gitops["base_branch"]},
+        {"name": "GITOPS_MANIFEST_PATH", "value": gitops["manifest_path"]},
+        {"name": "SRC_OWNER", "value": src["owner"]},
+        {"name": "SRC_REPO", "value": src["repo"]},
+        {"name": "SRC_BASE_BRANCH", "value": src["base_branch"]},
+        {"name": "SRC_PATH", "value": src["path"]},
+    ]
+    slack = safe_get(notifications, "slack")
+    if slack:
+        env.append({"name": "NOTIFY_SLACK_ENABLED", "value": "true"})
+        env.append({"name": "NOTIFY_SLACK_CHANNEL", "value": safe_get(slack, "channel", default="")})
+        env.append({
+            "name": "SLACK_WEBHOOK_URL",
+            "valueFrom": {"secretKeyRef": {"name": "notify-secrets", "key": "slack-webhook-url", "optional": True}},
+        })
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -175,18 +208,7 @@ def build_diagnosis_job(job_name, xr_namespace, diagnosis_image, xr_name, gitops
                             # `kind load docker-image`'d onto the node rather
                             # than trying (and failing) to pull it.
                             "imagePullPolicy": "IfNotPresent",
-                            "env": [
-                                {"name": "ROLLOUT_NAME", "value": xr_name},
-                                {"name": "ROLLOUT_NAMESPACE", "value": xr_namespace},
-                                {"name": "GITOPS_OWNER", "value": gitops["owner"]},
-                                {"name": "GITOPS_REPO", "value": gitops["repo"]},
-                                {"name": "GITOPS_BASE_BRANCH", "value": gitops["base_branch"]},
-                                {"name": "GITOPS_MANIFEST_PATH", "value": gitops["manifest_path"]},
-                                {"name": "SRC_OWNER", "value": src["owner"]},
-                                {"name": "SRC_REPO", "value": src["repo"]},
-                                {"name": "SRC_BASE_BRANCH", "value": src["base_branch"]},
-                                {"name": "SRC_PATH", "value": src["path"]},
-                            ],
+                            "env": env,
                             "resources": {
                                 "requests": {"cpu": "50m", "memory": "64Mi"},
                                 "limits": {"cpu": "200m", "memory": "128Mi"},
@@ -279,7 +301,8 @@ class FunctionRunner(grpcv1.FunctionRunnerService):
             job_name = f"diagnosis-{app_name}-{revision}"[:63]
             gitops = resolve_gitops_config(app_name, cluster, env, cfg)
             src = resolve_src_config(app_name, gitops)
-            job_manifest = build_diagnosis_job(job_name, xr_namespace, diagnosis_image, app_name, gitops, src)
+            notifications = safe_get(spec, "notifications", default={}) or {}
+            job_manifest = build_diagnosis_job(job_name, xr_namespace, diagnosis_image, app_name, gitops, src, notifications)
             rsp.desired.resources[f"diagnosis-job-{revision}"].resource.update(job_manifest)
             new_status["lastDiagnosisRevision"] = revision
             new_status["lastDiagnosisJob"] = job_name

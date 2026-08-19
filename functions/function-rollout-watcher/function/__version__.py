@@ -15,4 +15,4 @@
 """The version of the function."""
 
 # This is set at build time, using "hatch version"
-__version__ = "0.2.1"
+__version__ = "0.2.2"

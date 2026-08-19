@@ -24,4 +24,10 @@ spec:
   appName: {{ .Values.appName }}
   cluster: {{ .Values.cluster }}
   env: {{ .Values.envName }}
+  {{- if .Values.notifications.slack.enabled }}
+  notifications:
+    slack:
+      enabled: true
+      channel: {{ .Values.notifications.slack.channel | quote }}
+  {{- end }}
 {{- end }}

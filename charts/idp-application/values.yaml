@@ -251,6 +251,27 @@ secrets: [] # Embedded - same ExternalSecret/ClusterSecretStore mechanism platfo
 #                         # Infisical PATH prefix instead (shared/<name> vs
 #                         # <envName>/<name>).
 
+notifications: # AI-triage diagnosis notifications (2026-08-19) - deliberately the same
+  # shape as platform-cicd's own cicd.yaml notifications.slack.{enabled,channel}
+  # (see that project's docs/archive/2026-08-18-pre-refactor/notifications.md), not a
+  # new convention. Threaded into the RolloutWatch XR this chart already renders
+  # unconditionally (attached/rolloutwatch.yaml) - function-rollout-watcher's
+  # diagnosis Job reads it, see that function's own README for the full mechanism.
+  # Distinct from `secrets:` above - enabling this alone is enough, no separate
+  # secrets: entry needed. The actual webhook URL is never a values.yaml field (never
+  # committed to git) - enabling this renders a dedicated ExternalSecret
+  # (config/notify-external-secret.yaml) pulling `slack-webhook-url` from THIS APP'S
+  # OWN Infisical `shared` environment (same `shared: true` store convention
+  # `secrets:` entries already use - see that field's own comment above; a webhook
+  # is an app-wide credential, not one that should vary staging vs. prod). A real
+  # value must be populated there before enabling this, or the diagnosis Job's own
+  # notify step just logs a skip (see notify.py) rather than failing the diagnosis.
+  slack:
+    enabled: false
+    channel: "" # e.g. "#your-channel" - optional, only takes effect if the Slack
+                # workspace's webhook app allows overriding its own configured
+                # default channel; harmlessly ignored otherwise.
+
 volumes: [] # Embedded - PVC support. Same list-of-objects + range-loop pattern as
             # configMaps, per §3's 2026-08-13 revision.
 # - name: uploads
