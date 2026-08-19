@@ -188,13 +188,26 @@ def _parse_diagnosis(result: dict) -> dict:
     silently got nothing every time, hence every Slack message showing "none
     reported" for all three fields despite Holmes' own analysis text (and the
     real PR) being right there.
+
+    Second real bug, caught the very next live run after the first fix:
+    response_format isn't reliably honored - one run came back with a normal
+    prose/markdown analysis instead of the constrained JSON, and the JSON
+    parse above legitimately failed ("Expecting value: line 1 column 1"). The
+    old fallback (empty dict) meant the resulting notification carried NO
+    content at all, discarding a perfectly good investigation just because it
+    wasn't in the expected shape. Falls back to using the raw analysis text
+    as root_cause instead - degrades to "no fix_repo/PR link", not "nothing".
     """
     analysis = result.get("analysis", "")
     try:
         return json.loads(analysis)
     except (TypeError, ValueError) as e:
-        print(f"WARNING: could not parse Holmes' analysis field as JSON: {e}", file=sys.stderr)
-        return {}
+        print(
+            f"WARNING: Holmes did not return structured JSON in 'analysis' ({e}) - "
+            "falling back to its raw analysis text as root_cause",
+            file=sys.stderr,
+        )
+        return {"root_cause": analysis} if analysis else {}
 
 
 if __name__ == "__main__":
