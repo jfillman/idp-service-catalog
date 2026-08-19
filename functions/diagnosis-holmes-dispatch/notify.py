@@ -20,6 +20,7 @@ Slack's already are. See PagerDutyNotifier below for the shape a stub takes.
 """
 
 import os
+import re
 import sys
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -45,6 +46,19 @@ def _truncate(text: str, limit: int = _SLACK_TEXT_LIMIT) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "\n… (truncated)"
+
+
+def _escape_code_fence(text: str) -> str:
+    """Real bug caught live: Holmes' pr_description routinely quotes its own
+    evidence (log lines, error output) in ``` fences - wrapping that text
+    verbatim in this module's OWN outer ``` fence let the embedded fence
+    close it early, splitting one intended text box into several broken
+    fragments in Slack. A zero-width space after the first backtick of any
+    3+-backtick run defeats Slack's fence matching while staying visually
+    identical to a human reader - safe for runs of any length, not just
+    exactly 3.
+    """
+    return re.sub(r"`{3,}", lambda m: "`​" + m.group(0)[1:], text)
 
 
 class SlackNotifier(Notifier):
@@ -98,13 +112,14 @@ class SlackNotifier(Notifier):
 
         if root_cause:
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*Root Cause*"}})
-            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"```{_truncate(root_cause)}```"}})
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"```{_truncate(_escape_code_fence(root_cause))}```"}})
 
         if pr_url:
-            title_line = f"*<{pr_url}|{pr_title}>*" if pr_title else f"*<{pr_url}|View PR>*"
-            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": title_line}})
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*PR*"}})
+            link_line = f"<{pr_url}|{pr_title}>" if pr_title else f"<{pr_url}|View PR>"
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": link_line}})
             if pr_description:
-                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"```{_truncate(pr_description)}```"}})
+                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"```{_truncate(_escape_code_fence(pr_description))}```"}})
         else:
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*PR:* none opened"}})
 
