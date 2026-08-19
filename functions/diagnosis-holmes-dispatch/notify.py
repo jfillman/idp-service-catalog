@@ -116,8 +116,12 @@ class SlackNotifier(Notifier):
 
         if pr_url:
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*PR*"}})
-            link_line = f"<{pr_url}|{pr_title}>" if pr_title else f"<{pr_url}|View PR>"
-            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": link_line}})
+            # Title as plain text (can be long/descriptive) - the link itself stays a
+            # short, constant label rather than the title, which Slack would otherwise
+            # render as the clickable text verbatim, however long it is.
+            if pr_title:
+                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": pr_title}})
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"<{pr_url}|View PR →>"}})
             if pr_description:
                 blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"```{_truncate(_escape_code_fence(pr_description))}```"}})
         else:
