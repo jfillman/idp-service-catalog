@@ -26,7 +26,8 @@ in-cluster Service - see "Two auth methods" below for why that's not just a deta
 2. Creates exactly one Infisical environment, always named `shared`
 3. Creates an org-level machine identity, configures it per `spec.authMethod` - see
    "Two auth methods" below
-4. Adds that identity to the project with the `admin` project role
+4. Adds that identity to the project with the `viewer` project role (read-only - this
+   identity only ever needs to let ESO pull secrets, never manage the project)
 5. Writes credentials into a Kubernetes Secret (`spec.credentialsSecretName`) in the
    CR's own namespace, owned by the CR - shape depends on `authMethod` (see below)
 
@@ -157,12 +158,14 @@ Deployments (kind-dev, kind-prod) needed the update - not scoped to
   (real bootstrap tokens carry no org claim at all) - see `main.py`'s `get_org_id()`
   for the full story and how the real value gets looked up per-cluster.
 - **`ensure_project_membership` is called on every reconcile**, not just on create -
-  intentionally cheap, but NOT a no-op on Infisical's side despite what an earlier
-  version of this doc assumed: a repeat call for an already-added identity returns a
-  real 400 ("Identity is already a member"), caught live the first time this code
-  path ever ran against a real instance. `main.py` tolerates that one specific error
-  rather than treating it as a failure - worth knowing if you see it in logs, it's
-  expected, not a sign something's wrong.
+  intentionally cheap, but NOT a no-op on Infisical's side: a repeat POST for an
+  already-added identity returns a real 400 ("Identity is already a member"), caught
+  live the first time this code path ever ran against a real instance. `main.py`
+  falls through to a PATCH of the same membership on that expected 400, so an
+  already-provisioned identity's role self-heals to match the current `role`
+  argument on its next reconcile rather than staying stuck at whatever it was first
+  created with - worth knowing if you see the 400 in logs, it's expected, not a sign
+  something's wrong.
 
 ## Local dev loop (no registry yet)
 

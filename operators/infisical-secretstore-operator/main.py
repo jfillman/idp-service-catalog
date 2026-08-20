@@ -282,23 +282,27 @@ def configure_universal_auth(identity_id: str) -> dict | None:
     return {"clientId": client_id, "clientSecret": secret_resp["clientSecret"]}
 
 
-def ensure_project_membership(project_id: str, identity_id: str, role: str = "admin"):
+def ensure_project_membership(project_id: str, identity_id: str, role: str = "viewer"):
     # NOT idempotent on Infisical's side, actually - the assumption this endpoint's
     # schema implied a harmless repeat-call no-op was wrong, caught live the first
     # time this code path ever ran against a real instance: a second POST for an
     # already-added identity returns a real 400 ("Identity is already a member"),
-    # not a silent no-op. Retried on every reconcile anyway (ensures a role change
-    # would apply - not exercised yet, but cheap either way), so this just tolerates
-    # that one specific, expected error instead of treating it as a real failure.
-    resp = _session.post(
-        f"{INFISICAL_API_URL}/api/v1/projects/{project_id}/memberships/identities/{identity_id}",
-        json={"role": role},
-        timeout=15,
-    )
-    if resp.ok or (resp.status_code == 400 and "already a member" in resp.text):
+    # not a silent no-op. Retried on every reconcile anyway, so on that expected 400
+    # this falls through to a PATCH of the same path instead of just swallowing the
+    # error - confirmed against Infisical's real OpenAPI spec (roles: [{role}], not a
+    # bare role string) - so an already-provisioned identity's role actually heals to
+    # match `role` on its next reconcile instead of staying stuck at whatever it was
+    # first created with.
+    url = f"{INFISICAL_API_URL}/api/v1/projects/{project_id}/memberships/identities/{identity_id}"
+    resp = _session.post(url, json={"role": role}, timeout=15)
+    if resp.ok:
         return
+    if resp.status_code == 400 and "already a member" in resp.text:
+        resp = _session.patch(url, json={"roles": [{"role": role}]}, timeout=15)
+        if resp.ok:
+            return
     raise kopf.TemporaryError(
-        f"POST .../memberships/identities/{identity_id} -> {resp.status_code}: {resp.text[:500]}",
+        f"POST/PATCH .../memberships/identities/{identity_id} -> {resp.status_code}: {resp.text[:500]}",
         delay=15,
     )
 
@@ -405,7 +409,7 @@ def reconcile(spec: dict, status: dict, meta: dict, namespace: str, name: str,
     identity_id = identity["id"]
     patch.status["identityId"] = identity_id
 
-    ensure_project_membership(project_id, identity_id, role="admin")
+    ensure_project_membership(project_id, identity_id, role="viewer")
 
     # authMethod is required, set by the SecretStore Composition from a cluster-
     # registry lookup - never a developer-facing choice (same "app owner never
