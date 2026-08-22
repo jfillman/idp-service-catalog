@@ -10,8 +10,9 @@
 # false, same "not found yet, retry next reconcile" shape already used for
 # WorkloadDeployed/CicdOnboarded, not a new failure mode.
 #
-# $clusterOk/$appName/$env/$cluster/$xrName/$gitopsRepoUrl/$appRepoUrl/$tenantsRepo
-# are all declared once here, not redeclared per file below - Go template variables
+# $clusterOk/$appName/$env/$cluster/$xrName/$gitopsRepoUrl/$appRepoUrl/$tenantsRepo/
+# $configMapGenerator are all declared once here, not redeclared per file below - Go
+# template variables
 # declared at this (unindented) scope persist for the rest of this template's
 # execution across the --- separators, confirmed by this catalog's existing pattern
 # of one big concatenated template per pipeline step (build-composition.sh).
@@ -44,6 +45,7 @@
 <<- $tenantsRepo := printf "gitops-cluster-%s-tenants" $cluster >>
 <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s" $platformOwner $appName >>
 <<- $appRepoUrl := printf "https://github.com/%s/%s" $platformOwner $appName >>
+<<- $configMapGenerator := $spec.configMapGenerator | default false >>
 <<- $allExtra := .extraResources | default dict >>
 <<- $entry := index $allExtra "cluster-registry-entry" | default dict >>
 <<- $items := index $entry "items" | default list >>

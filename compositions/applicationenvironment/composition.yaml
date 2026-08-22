@@ -50,8 +50,9 @@ spec:
             # false, same "not found yet, retry next reconcile" shape already used for
             # WorkloadDeployed/CicdOnboarded, not a new failure mode.
             #
-            # $clusterOk/$appName/$env/$cluster/$xrName/$gitopsRepoUrl/$appRepoUrl/$tenantsRepo
-            # are all declared once here, not redeclared per file below - Go template variables
+            # $clusterOk/$appName/$env/$cluster/$xrName/$gitopsRepoUrl/$appRepoUrl/$tenantsRepo/
+            # $configMapGenerator are all declared once here, not redeclared per file below - Go
+            # template variables
             # declared at this (unindented) scope persist for the rest of this template's
             # execution across the --- separators, confirmed by this catalog's existing pattern
             # of one big concatenated template per pipeline step (build-composition.sh).
@@ -84,6 +85,7 @@ spec:
             <<- $tenantsRepo := printf "gitops-cluster-%s-tenants" $cluster >>
             <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s" $platformOwner $appName >>
             <<- $appRepoUrl := printf "https://github.com/%s/%s" $platformOwner $appName >>
+            <<- $configMapGenerator := $spec.configMapGenerator | default false >>
             <<- $allExtra := .extraResources | default dict >>
             <<- $entry := index $allExtra "cluster-registry-entry" | default dict >>
             <<- $items := index $entry "items" | default list >>
@@ -381,10 +383,15 @@ spec:
             # ApplicationSet) never required the change - one URL format everywhere beats a
             # case-by-case exemption. No appRepoUrl here - no consumer at the per-env level.
             #
-            # $appName/$env/$cluster/$xrName/$platformOwner/$tenantsRepo/$gitopsRepoUrl all come
-            # from 00-cluster-gate.yaml - see that file's header for why they're declared once
-            # there instead of redeclared per file, and why this whole resource is wrapped in
-            # the $clusterOk gate.
+            # $appName/$env/$cluster/$xrName/$platformOwner/$tenantsRepo/$gitopsRepoUrl/
+            # $configMapGenerator all come from 00-cluster-gate.yaml - see that file's header for
+            # why they're declared once there instead of redeclared per file, and why this whole
+            # resource is wrapped in the $clusterOk gate.
+            #
+            # configMapGenerator (added 2026-08-22): only emitted when true, never a literal
+            # `configMapGenerator: false` line - keeps identity.yaml's shape unchanged for every
+            # env that hasn't opted in, matching the ApplicationSet's own `hasKey` gate (absent
+            # key, not false value, is what "not opted in" means there).
             <<- if $clusterOk >>
             apiVersion: repo.github.m.upbound.io/v1alpha1
             kind: RepositoryFile
@@ -405,6 +412,9 @@ spec:
                   gitopsRepoUrl: <<$gitopsRepoUrl>>
                   githubOwner: <<$platformOwner>>
                   env: <<$env>>
+                  <<- if $configMapGenerator >>
+                  configMapGenerator: true
+                  <<- end >>
                 commitMessage: <<printf "Onboard %s %s: add tenants/%s/%s/identity.yaml" $appName $env $appName $env | toJson>>
             <<- end >>
             ---

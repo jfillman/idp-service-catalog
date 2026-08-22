@@ -16,10 +16,15 @@
 # ApplicationSet) never required the change - one URL format everywhere beats a
 # case-by-case exemption. No appRepoUrl here - no consumer at the per-env level.
 #
-# $appName/$env/$cluster/$xrName/$platformOwner/$tenantsRepo/$gitopsRepoUrl all come
-# from 00-cluster-gate.yaml - see that file's header for why they're declared once
-# there instead of redeclared per file, and why this whole resource is wrapped in
-# the $clusterOk gate.
+# $appName/$env/$cluster/$xrName/$platformOwner/$tenantsRepo/$gitopsRepoUrl/
+# $configMapGenerator all come from 00-cluster-gate.yaml - see that file's header for
+# why they're declared once there instead of redeclared per file, and why this whole
+# resource is wrapped in the $clusterOk gate.
+#
+# configMapGenerator (added 2026-08-22): only emitted when true, never a literal
+# `configMapGenerator: false` line - keeps identity.yaml's shape unchanged for every
+# env that hasn't opted in, matching the ApplicationSet's own `hasKey` gate (absent
+# key, not false value, is what "not opted in" means there).
 <<- if $clusterOk >>
 apiVersion: repo.github.m.upbound.io/v1alpha1
 kind: RepositoryFile
@@ -40,5 +45,8 @@ spec:
       gitopsRepoUrl: <<$gitopsRepoUrl>>
       githubOwner: <<$platformOwner>>
       env: <<$env>>
+      <<- if $configMapGenerator >>
+      configMapGenerator: true
+      <<- end >>
     commitMessage: <<printf "Onboard %s %s: add tenants/%s/%s/identity.yaml" $appName $env $appName $env | toJson>>
 <<- end >>

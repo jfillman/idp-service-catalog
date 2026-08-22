@@ -128,4 +128,25 @@ spec:
                   pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
                   minLength: 1
                   maxLength: 20
+                configMapGenerator:
+                  type: boolean
+                  default: false
+                  description: >-
+                    Opts this env into the tenant-onboarding ApplicationSet's
+                    optional 3rd Kustomize source (a configMapGenerator for
+                    apps with many config files - see that ApplicationSet's
+                    own templatePatch comment for the full mechanism). Plumbed
+                    through to tenants/<appName>/<env>/identity.yaml's
+                    configMapGenerator: field so it survives this
+                    Composition's own continuous RepositoryFile reconciliation
+                    - added 2026-08-22 after a manual, out-of-band edit to
+                    that identity.yaml (done to live-test the mechanism
+                    2026-08-18) was silently reverted by the next reconcile,
+                    since this field didn't exist yet for the Composition to
+                    read and re-render. Caught live on kind-prod: the
+                    ApplicationSet stopped rendering the 3rd source once the
+                    flag reverted, orphaning the checkout-api-app-config
+                    ConfigMap it had generated - ArgoCD flagged it
+                    requiresPruning without ever actually deleting it (no
+                    prune: true on this Application's syncPolicy).
           required: ["spec"]
