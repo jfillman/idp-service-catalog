@@ -247,7 +247,16 @@ class FunctionRunner(grpcv1.FunctionRunnerService):
         # Always compose the diagnosis Job's ServiceAccount, whether or not a
         # diagnosis is happening this reconcile - see build_diagnosis_service_account's
         # own docstring.
+        #
+        # Explicit ready=True: a plain ServiceAccount has no status.conditions
+        # for Crossplane's default readiness auto-detection to find, so
+        # without this the XR's Ready condition sticks at False ("Unready
+        # resources: diagnosis-dispatch-sa") forever, even though the
+        # ServiceAccount is created successfully. Caught live on kind-prod -
+        # RolloutWatch stuck Ready=False since generation 1, which ArgoCD's
+        # health check surfaces as the Application sitting in Progressing.
         rsp.desired.resources["diagnosis-dispatch-sa"].resource.update(build_diagnosis_service_account())
+        rsp.desired.resources["diagnosis-dispatch-sa"].ready = fnv1.READY_TRUE
 
         # --- Watch the observed (live) Rollout status ---
         # idp-application's Helm chart renders the real Rollout directly

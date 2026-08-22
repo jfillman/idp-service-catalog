@@ -113,9 +113,23 @@ crossplane xpkg push \
   ghcr.io/jfillman/function-rollout-watcher:<tag>
 ```
 
-Current known-good tag: `ghcr.io/jfillman/function-rollout-watcher:v0.2.0`
-(public package — no `packagePullSecrets` needed, confirmed live against both
-`kind-dev` and `kind-prod`'s installed `Function` resources).
+Current known-good tag: `ghcr.io/jfillman/function-rollout-watcher:v0.2.3`
+(public package — no `packagePullSecrets` needed, confirmed live against
+`kind-prod`'s installed `Function` resource; `kind-dev` is still pinned to
+the older `v0.1.16`, predating the `diagnosis-dispatch-sa` composed
+resource entirely).
+
+**v0.2.3 (2026-08-22)**: fixed the composed `diagnosis-dispatch-sa`
+`ServiceAccount` never becoming `Ready`. A plain `ServiceAccount` has no
+`status.conditions` for Crossplane's default readiness auto-detection to
+find, so `build_diagnosis_service_account`'s composed resource sat in
+`Creating` forever — the XR's own `Ready` condition never flipped to `True`
+("Unready resources: diagnosis-dispatch-sa"), which surfaced up through
+ArgoCD's health check as the owning `Application` stuck in `Progressing`.
+Caught live on `kind-prod`, stuck since the resource was first composed on
+2026-08-19. Fix: set `ready = fnv1.READY_TRUE` explicitly on that composed
+resource in `fn.py`, since it has no status Crossplane can infer readiness
+from on its own.
 
 ## Known gaps
 
