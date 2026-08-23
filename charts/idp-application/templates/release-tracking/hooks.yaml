@@ -23,6 +23,13 @@ env and silently never again. PHASE is the one thing that differs between the tw
 Jobs - which hook ran already tells the relay the outcome, no live status read
 needed by the hook itself.
 
+CLUSTER (added alongside this chart's own bump, see Chart.yaml) is new: the script
+now builds the full CDEvent itself (source/id embed the cluster name) instead of
+sending a flat request for argocd-outcome-relay to reshape - the relay's job shrank
+to authenticate-and-forward, so it needs this script to hand it a complete,
+ready-to-relay event. See platform-cicd/catalog/lib/argocd-outcome-hook.sh's own
+header and platform-cicd/docs/admin/multi-cluster.md for the full reasoning.
+
 Deliberately NOT using idp-application.serviceAccountName / the shared app
 ServiceAccount (rbac.yaml, this same directory, provisions platform-outcome-hook
 instead) - this is its own narrowly-scoped identity (get on exactly one Secret),
@@ -61,6 +68,7 @@ spec:
             - name: POD_NAMESPACE
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
             - { name: RELAY_URL, value: {{ $rt.relayUrl | default "" | quote }} }
+            - { name: CLUSTER, value: {{ $rt.cluster | default "" | quote }} }
             - { name: APP_NAMESPACE, value: {{ $rt.appNamespace | default "" | quote }} }
             - { name: APP_NAME, value: {{ $.Values.appName | quote }} }
             - { name: ENV, value: {{ $.Values.envName | quote }} }

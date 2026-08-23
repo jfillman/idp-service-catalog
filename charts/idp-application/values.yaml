@@ -74,6 +74,11 @@ devClusterName: kind-dev
 # it's always current for whichever release is actually being synced.
 releaseTracking: null
 # relayUrl: http://10.89.0.2:30880/outcome/kind-prod  # platform-cicd's argocd-outcome-relay
+# cluster: kind-prod                      # must match the relayUrl's own /outcome/<cluster>
+#                                          # suffix - the hook script embeds this into the
+#                                          # CDEvent it builds, and argocd-outcome-relay
+#                                          # checks it against what the shared secret
+#                                          # actually authenticated as.
 # appNamespace: app-checkout-api-cicd     # the APP's platform-cicd namespace (dev cluster) -
 #                                          # NOT this release's own namespace (that's
 #                                          # POD_NAMESPACE, read live by the hook via the
