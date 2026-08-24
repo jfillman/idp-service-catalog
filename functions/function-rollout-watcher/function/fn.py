@@ -318,19 +318,47 @@ class FunctionRunner(grpcv1.FunctionRunnerService):
             new_status["lastDiagnosisTime"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             response.warning(rsp, f"Rollout {xr_name} is {phase}; dispatched diagnosis Job {job_name}")
             log.info("dispatched diagnosis job", job=job_name, revision=revision, phase=phase)
+        elif phase and phase not in DEGRADED_PHASES:
+            # Recovered (or was never degraded). Stop declaring the prior
+            # diagnosis Job — a native composed resource is pruned by
+            # Crossplane the instant a function stops including its key in
+            # the response — and clear the tracking fields so a *future*
+            # degradation, even a flap back to this same revision, dispatches
+            # a fresh diagnosis instead of being silently suppressed by
+            # lastDiagnosisRevision still matching.
+            #
+            # Real bug this fixes, caught live on kind-dev: the old code kept
+            # re-declaring the Job's bare identity (no `spec`, see the
+            # comment in the branch below for why) forever, on every
+            # reconcile, regardless of the Rollout's current phase. If that
+            # Job was ever deleted out-of-band (GC, manual cleanup, a cluster
+            # rebuild), Crossplane tried to re-create it from that spec-less
+            # manifest and failed required-field validation every time —
+            # pinning the XR's Synced/Ready conditions to False forever, even
+            # though status.rolloutPhase correctly showed Healthy.
+            if last_handled_revision or safe_get(prev_status, "lastDiagnosisJob"):
+                new_status.pop("lastDiagnosisRevision", None)
+                new_status.pop("lastDiagnosisJob", None)
+                new_status.pop("lastDiagnosisTime", None)
+                log.info("rollout recovered, clearing diagnosis tracking", xr=xr_name, phase=phase)
+            response.normal(rsp, f"Rollout {xr_name} observed phase={phase}")
+            log.info("watched rollout", xr=xr_name, phase=phase)
         else:
-            # Keep declaring an already-dispatched job's identity every
-            # reconcile — a native composed resource is pruned by Crossplane
-            # the instant a function stops including its key in the
-            # response, and there's no "Observe/Create only" management
-            # policy for it like the old provider-kubernetes Object wrapper
-            # had. Deliberately NOT re-submitting `spec`: Job.spec.template
-            # is immutable after creation, and Kubernetes' immutability
-            # check compares the post-merge object against the stored one —
-            # omitting spec here means Crossplane's server-side-apply patch
-            # simply doesn't touch that field, leaving the already-created
-            # Job's template alone (which is genuinely never allowed to
-            # change), while still keeping the resource in the desired set.
+            # Still degraded on the same already-diagnosed revision, or the
+            # Rollout's phase isn't known yet this reconcile (extra-resources
+            # requirement not resolved yet — phase is falsy). Keep declaring
+            # an already-dispatched job's identity every reconcile — a native
+            # composed resource is pruned by Crossplane the instant a
+            # function stops including its key in the response, and there's
+            # no "Observe/Create only" management policy for it like the old
+            # provider-kubernetes Object wrapper had. Deliberately NOT
+            # re-submitting `spec`: Job.spec.template is immutable after
+            # creation, and Kubernetes' immutability check compares the
+            # post-merge object against the stored one — omitting spec here
+            # means Crossplane's server-side-apply patch simply doesn't touch
+            # that field, leaving the already-created Job's template alone
+            # (which is genuinely never allowed to change), while still
+            # keeping the resource in the desired set.
             if last_handled_revision and safe_get(prev_status, "lastDiagnosisJob"):
                 rsp.desired.resources[f"diagnosis-job-{last_handled_revision}"].resource.update({
                     "apiVersion": "batch/v1",

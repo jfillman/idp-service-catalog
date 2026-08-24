@@ -113,11 +113,27 @@ crossplane xpkg push \
   ghcr.io/jfillman/function-rollout-watcher:<tag>
 ```
 
-Current known-good tag: `ghcr.io/jfillman/function-rollout-watcher:v0.2.3`
-(public package — no `packagePullSecrets` needed, confirmed live against
-`kind-prod`'s installed `Function` resource; `kind-dev` is still pinned to
-the older `v0.1.16`, predating the `diagnosis-dispatch-sa` composed
-resource entirely).
+Current known-good tag: `ghcr.io/jfillman/function-rollout-watcher:v0.2.4`
+(public package — no `packagePullSecrets` needed).
+
+**v0.2.4 (2026-08-24)**: fixed the RolloutWatch XR staying `Synced=False`/
+`Ready=False` forever after the Rollout it watches recovers. The previous
+code kept re-declaring an already-dispatched diagnosis `Job`'s bare identity
+(no `spec`, deliberately — see the comment above `build_diagnosis_job`'s
+caller) on *every* reconcile, unconditionally, regardless of the Rollout's
+current phase. If that Job was ever deleted out-of-band (GC, manual cleanup,
+a cluster rebuild), Crossplane tried to re-create it from that spec-less
+manifest and failed required-field validation every time
+(`spec.template.spec.containers: Required value`, etc.) — pinning
+Synced/Ready to `False` forever, even though `status.rolloutPhase` correctly
+showed `Healthy`. Caught live on `kind-dev`: `checkout-api`'s RolloutWatch
+sat `Ready=False` for 3+ hours after the underlying Rollout had already
+recovered, 212 identical apply failures in its events. Fix: once the
+Rollout's phase leaves `Degraded`/`Error`, stop declaring the prior Job (so
+Crossplane prunes it) and clear `lastDiagnosisRevision`/`lastDiagnosisJob`/
+`lastDiagnosisTime`, which also means a future flap back to the same
+revision dispatches a fresh diagnosis instead of being suppressed by a stale
+`lastDiagnosisRevision` match.
 
 **v0.2.3 (2026-08-22)**: fixed the composed `diagnosis-dispatch-sa`
 `ServiceAccount` never becoming `Ready`. A plain `ServiceAccount` has no
