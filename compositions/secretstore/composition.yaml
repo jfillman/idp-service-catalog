@@ -160,7 +160,7 @@ spec:
             <<- $envSlug := $spec.environmentSlug | default "shared" >>
             <<- $projectSlug := printf "%s-%s" $appName $spec.cluster >>
             <<- $credsSecretName := printf "%s-infisical-creds" $projectSlug >>
-            <<- $hostAPI := "http://10.89.0.2:31800/api" >>
+            <<- $hostAPI := "http://10.89.0.5:31800/api" >>
             <<- $authMethod := "universal" >>
             <<- if $isInfisicalHost >>
               <<- $hostAPI = "http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080/api" >>
@@ -302,7 +302,7 @@ spec:
             <<- $envSlug := $spec.environmentSlug | default "shared" >>
             <<- $projectSlug := printf "%s-%s" $appName $spec.cluster >>
             <<- $credsSecretName := printf "%s-infisical-creds" $projectSlug >>
-            <<- $hostAPI := "http://10.89.0.2:31800/api" >>
+            <<- $hostAPI := "http://10.89.0.5:31800/api" >>
             <<- $authMethod := "universal" >>
             <<- if $isInfisicalHost >>
               <<- $hostAPI = "http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080/api" >>
