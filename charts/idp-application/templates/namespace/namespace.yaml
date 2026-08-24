@@ -1,0 +1,31 @@
+# Every ApplicationSet that renders this chart (platform-cicd's ephemeral-envs.yaml,
+# gitops-cluster-dev/kind-prod's lower-envs-applicationset.yaml and
+# tenant-onboarding/applicationset.yaml) targets a namespace that exists ONLY because
+# CreateNamespace=true auto-creates it. An auto-created-only namespace is deliberately
+# not part of ArgoCD's tracked resource tree (confirmed against ArgoCD's own sync-options
+# docs) - it survives `argocd app delete` with the cascade finalizer, which is exactly
+# the leftover-namespace bug this template fixes (found live: app-checkout-api-pr-9 sat
+# around after its Application was cascade-deleted, 2026-08-24).
+#
+# Declaring the Namespace here instead makes it a normal tracked resource like anything
+# else this chart renders - ArgoCD prunes it on cascade delete same as a Deployment or
+# Service, and k8s's own namespace-delete semantics take care of anything left inside it
+# (e.g. registry-credentials, which isn't individually tracked either). CreateNamespace=true
+# stays harmless to leave set on every caller (still a no-op once the namespace is already
+# declared here - confirmed against the same docs), but managedNamespaceMetadata does NOT:
+# an explicit Namespace manifest overwrites whatever managedNamespaceMetadata would have
+# set, so every caller's ephemeral-env/managed-secrets labels move into namespace.labels
+# below instead.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "idp-application.namespace" . }}
+  labels:
+    {{- include "idp-application.labels" . | nindent 4 }}
+    {{- with .Values.namespace.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.namespace.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}

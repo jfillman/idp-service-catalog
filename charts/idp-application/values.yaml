@@ -48,6 +48,16 @@ envName: ""
 # cluster assumption - see xrds/secretstore.yaml).
 devClusterName: kind-dev
 
+# NOT in §3's schema - added 2026-08-24 so this chart's own Namespace object (see
+# templates/namespace/namespace.yaml) can carry the same per-caller labels
+# managedNamespaceMetadata used to apply before an explicit Namespace manifest made it
+# a no-op (e.g. platform.io/ephemeral-env: "true" for the PR-preview ttl-sweep
+# selector, platform.io/managed-secrets: "true" for the registry-credentials
+# ClusterExternalSecret every caller already sets identically today).
+namespace:
+  labels: {}
+  annotations: {}
+
 # NOT in the schema doc - platform-cicd-specific plumbing (idp-service-catalog is
 # not the only writer of this file: idp-service-catalog's own ApplicationEnvironment
 # composition bootstraps a values.yaml with this null/absent, and platform-cicd's
