@@ -2,6 +2,11 @@
 # "gitops-<app-name> gets created here, empty, rather than by item 3 [ApplicationEnvironment]
 # - its lifecycle is app-level (create once)". Just a README for now; the real
 # <cluster>/<env>/values.yaml layout gets populated once ApplicationEnvironment exists.
+#
+# crossplane.io/external-name below - same fix, same reasoning as src-repo.yaml's own
+# header: a cluster rebuild's fresh Repository MR has no external-name, so
+# provider-github tries to Create a repo that already exists on GitHub and 422s. Set to
+# the deterministic gitops-<app> name up front so it Observes/adopts instead.
 <<- $xrName := .observed.composite.resource.metadata.name >>
 <<- $spec := .observed.composite.resource.spec >>
 <<- $visibility := $spec.visibility >>
@@ -11,6 +16,7 @@ metadata:
   name: <<$xrName>>-gitops
   annotations:
     <<setResourceNameAnnotation "gitops-repo">>
+    crossplane.io/external-name: <<printf "gitops-%s" $xrName>>
 spec:
   providerConfigRef:
     kind: ClusterProviderConfig

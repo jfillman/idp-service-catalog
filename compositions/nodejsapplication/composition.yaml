@@ -193,6 +193,11 @@ spec:
             # "gitops-<app-name> gets created here, empty, rather than by item 3 [ApplicationEnvironment]
             # - its lifecycle is app-level (create once)". Just a README for now; the real
             # <cluster>/<env>/values.yaml layout gets populated once ApplicationEnvironment exists.
+            #
+            # crossplane.io/external-name below - same fix, same reasoning as src-repo.yaml's own
+            # header: a cluster rebuild's fresh Repository MR has no external-name, so
+            # provider-github tries to Create a repo that already exists on GitHub and 422s. Set to
+            # the deterministic gitops-<app> name up front so it Observes/adopts instead.
             <<- $xrName := .observed.composite.resource.metadata.name >>
             <<- $spec := .observed.composite.resource.spec >>
             <<- $visibility := $spec.visibility >>
@@ -202,6 +207,7 @@ spec:
               name: <<$xrName>>-gitops
               annotations:
                 <<setResourceNameAnnotation "gitops-repo">>
+                crossplane.io/external-name: <<printf "gitops-%s" $xrName>>
             spec:
               providerConfigRef:
                 kind: ClusterProviderConfig
@@ -329,6 +335,16 @@ spec:
             # every Repository below - RepositoryFile requires the target branch to already exist,
             # which an empty repo doesn't have.
             #
+            # crossplane.io/external-name on the Repository below (this app's GitHub repo name,
+            # known deterministically at render time - same $xrName the forProvider.name uses) -
+            # added after a real live bug: a cluster rebuild (kind-dev's Crossplane state is
+            # ephemeral, GitHub's isn't) starts every already-onboarded app's Repository MR with no
+            # external-name at all, so provider-github's default behavior is Create, not Observe -
+            # GitHub 422s ("name already exists on this account") since the repo from before the
+            # rebuild is still there, and Ready never clears. Setting external-name up front makes
+            # the MR import/adopt the existing repo instead. Hit live for both checkout-api and
+            # nodejs-demo-app the same day this was fixed - not a hypothetical.
+            #
             # managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"] (no "Update") on
             # every RepositoryFile below - deliberately different from applicationenvironment's
             # cluster-identity-yaml.yaml, which stays under full management (minus Delete) because
@@ -362,6 +378,7 @@ spec:
               name: <<$xrName>>-src
               annotations:
                 <<setResourceNameAnnotation "src-repo">>
+                crossplane.io/external-name: <<$xrName>>
             spec:
               providerConfigRef:
                 kind: ClusterProviderConfig
