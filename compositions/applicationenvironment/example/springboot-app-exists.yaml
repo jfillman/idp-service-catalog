@@ -1,0 +1,16 @@
+# --required-resources fixture: simulates a real SpringBootApplication XR named
+# "widget-service" already existing in the same namespace as xr-staging.yaml's XR
+# (demo-apps) - what 00-app-kind-gate.yaml's own ExtraResources lookup would find for
+# a SpringBootApplication-owned app. Paired with xr-staging.yaml +
+# cluster-registry-ready.yaml to prove app-usage.yaml's Usage resolves
+# kind: SpringBootApplication instead of the NodeJSApplication default - see
+# 00-app-kind-gate.yaml's own header for why this matters (a hardcoded
+# NodeJSApplication kind left the composite's own Ready condition stuck forever for
+# any real SpringBootApplication env, confirmed live on order-api-kind-prod-prod).
+apiVersion: catalog.idp.io/v1alpha1
+kind: SpringBootApplication
+metadata:
+  name: widget-service
+  namespace: demo-apps
+spec:
+  appName: widget-service

@@ -14,6 +14,14 @@ crossplane render xr-staging.yaml ../composition.yaml functions.yaml -x -r \
 # rendered shape as a registered-but-not-ready or type: dev entry - the Composition
 # doesn't distinguish those cases, see 00-cluster-gate.yaml)
 crossplane render xr-staging.yaml ../composition.yaml functions.yaml -x -r
+
+# App-kind resolution: neither app-kind lookup found (00-app-kind-gate.yaml) falls
+# back to kind: NodeJSApplication on the composed app-usage Usage - exercised by
+# either command above already, since neither passes an app-kind fixture. Add
+# springboot-app-exists.yaml to prove the SpringBootApplication branch instead:
+crossplane render xr-staging.yaml ../composition.yaml functions.yaml -x -r \
+  --required-resources cluster-registry-ready.yaml \
+  --required-resources springboot-app-exists.yaml
 ```
 
 Requires Docker (`crossplane render` pulls and runs `function-go-templating` /

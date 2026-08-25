@@ -17,14 +17,15 @@
 # webhook + Usage controller do all the work purely by watching Usage objects,
 # regardless of what composed them.
 #
-# spec.of targets the parent NodeJSApplication by $appName (spec.appName - see
-# xrds/applicationenvironment.yaml's own field description for why trusting it here
-# is safe even though it's otherwise "labeling/audit only, no live existence check":
-# a Usage against a NodeJSApplication that doesn't actually exist by that name is
-# simply never matched by the Usage controller, so it never blocks anything - no
-# admission-time existence check needed for THIS mechanism to be correct, only for
-# the RepositoryFile writes elsewhere in this template, which already fail loudly and
-# separately if $appName doesn't resolve to a real gitops-<appName> repo).
+# spec.of targets the parent app by $appName (spec.appName - see
+# xrds/applicationenvironment.yaml's own field description for why trusting the NAME
+# here is safe even though it's otherwise "labeling/audit only, no live existence
+# check" - only for the RepositoryFile writes elsewhere in this template, which
+# already fail loudly and separately if $appName doesn't resolve to a real
+# gitops-<appName> repo). The KIND is no longer hardcoded NodeJSApplication - $appKind
+# comes from 00-app-kind-gate.yaml's own ExtraResources lookup, resolving to whichever
+# of NodeJSApplication/SpringBootApplication actually exists by that name (see that
+# file's header for why the hardcoded version broke SpringBootApplication envs).
 #
 # $xrNamespace comes from this XR's own metadata (Crossplane v2, scope: Namespaced) -
 # NodeJSApplication and ApplicationEnvironment are always onboarded into the same
@@ -63,7 +64,7 @@ metadata:
 spec:
   of:
     apiVersion: catalog.idp.io/v1alpha1
-    kind: NodeJSApplication
+    kind: <<$appKind>>
     resourceRef:
       name: <<$appName>>
       namespace: <<$xrNamespace>>
@@ -72,5 +73,5 @@ spec:
     kind: ApplicationEnvironment
     resourceRef:
       name: <<$xrName>>
-  reason: <<printf "ApplicationEnvironment %s references NodeJSApplication %s via spec.appName - blocks app deletion until every referencing env is gone (idp/docs/service-catalog-design.md §0)" $xrName $appName | toJson>>
+  reason: <<printf "ApplicationEnvironment %s references %s %s via spec.appName - blocks app deletion until every referencing env is gone (idp/docs/service-catalog-design.md §0)" $xrName $appKind $appName | toJson>>
   replayDeletion: true

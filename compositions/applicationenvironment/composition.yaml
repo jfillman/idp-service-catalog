@@ -38,6 +38,62 @@ spec:
         source: Inline
         inline:
           template: |
+            # ExtraResources lookup resolving which real XR kind $appName actually is -
+            # NodeJSApplication or SpringBootApplication. Added once SpringBootApplication went
+            # from "future" (xrds/applicationenvironment.yaml's own appName description already
+            # anticipated it, written before either existed) to real and app-usage.yaml's
+            # previously-hardcoded `kind: NodeJSApplication` was found live to break it.
+            #
+            # That hardcoding wasn't just wrong labeling: app-usage.yaml's own header claimed a
+            # Usage whose `of` target doesn't exist is "simply never matched...harmless no-op" -
+            # true only for the deletion-protection webhook's purpose. In practice the Usage
+            # controller never sets a status.conditions[Ready] on an unmatched Usage, and
+            # function-auto-ready gates THIS composite's own Ready condition on every composed
+            # resource reaching Ready - so a SpringBootApplication-owned env stayed
+            # "Unready resources: app-usage" forever. Confirmed live: order-api-kind-prod-prod
+            # stuck at Ready: False until this fix; checkout-api-kind-prod-prod (a real
+            # NodeJSApplication) unaffected throughout, its Usage already Ready: True.
+            #
+            # Two separate ExtraResources requirements, not one - Crossplane requirements are
+            # typed per GVK, no "try kind A, fall back to kind B" primitive exists. Defaults to
+            # NodeJSApplication if neither resolves yet - same "not found yet, retry next
+            # reconcile" two-pass shape every other gate in this Composition already has, and
+            # preserves this Composition's prior behavior for the common case.
+            #
+            # $appName/$xrNamespace redeclared locally rather than reused from 00-cluster-gate.yaml
+            # - matches this catalog's existing per-file redeclaration convention (see
+            # compositions/secretstore's own templates, each independently redeclaring $spec/
+            # $appName), and keeps this file's own alphabetical position (globbed before
+            # app-usage.yaml, which is all that actually matters) independent of
+            # 00-cluster-gate.yaml's.
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $appName := $spec.appName >>
+            <<- $xrNamespace := .observed.composite.resource.metadata.namespace >>
+            <<- $allExtra := .extraResources | default dict >>
+            <<- $nodejsEntry := index $allExtra "app-kind-nodejs" | default dict >>
+            <<- $nodejsItems := index $nodejsEntry "items" | default list >>
+            <<- $springbootEntry := index $allExtra "app-kind-springboot" | default dict >>
+            <<- $springbootItems := index $springbootEntry "items" | default list >>
+            <<- $appKind := "NodeJSApplication" >>
+            <<- if gt (len $nodejsItems) 0 >>
+              <<- $appKind = "NodeJSApplication" >>
+            <<- else if gt (len $springbootItems) 0 >>
+              <<- $appKind = "SpringBootApplication" >>
+            <<- end >>
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ExtraResources
+            requirements:
+              app-kind-nodejs:
+                apiVersion: catalog.idp.io/v1alpha1
+                kind: NodeJSApplication
+                namespace: <<$xrNamespace>>
+                matchName: <<$appName>>
+              app-kind-springboot:
+                apiVersion: catalog.idp.io/v1alpha1
+                kind: SpringBootApplication
+                namespace: <<$xrNamespace>>
+                matchName: <<$appName>>
+            ---
             # Real Crossplane extra-resources lookup against the cluster registry
             # (gitops-cluster-dev/00-bootstrap/cluster-registry/, service-catalog-design.md §0) -
             # the first actual use of this mechanism in this catalog, confirmed against
@@ -128,14 +184,15 @@ spec:
             # webhook + Usage controller do all the work purely by watching Usage objects,
             # regardless of what composed them.
             #
-            # spec.of targets the parent NodeJSApplication by $appName (spec.appName - see
-            # xrds/applicationenvironment.yaml's own field description for why trusting it here
-            # is safe even though it's otherwise "labeling/audit only, no live existence check":
-            # a Usage against a NodeJSApplication that doesn't actually exist by that name is
-            # simply never matched by the Usage controller, so it never blocks anything - no
-            # admission-time existence check needed for THIS mechanism to be correct, only for
-            # the RepositoryFile writes elsewhere in this template, which already fail loudly and
-            # separately if $appName doesn't resolve to a real gitops-<appName> repo).
+            # spec.of targets the parent app by $appName (spec.appName - see
+            # xrds/applicationenvironment.yaml's own field description for why trusting the NAME
+            # here is safe even though it's otherwise "labeling/audit only, no live existence
+            # check" - only for the RepositoryFile writes elsewhere in this template, which
+            # already fail loudly and separately if $appName doesn't resolve to a real
+            # gitops-<appName> repo). The KIND is no longer hardcoded NodeJSApplication - $appKind
+            # comes from 00-app-kind-gate.yaml's own ExtraResources lookup, resolving to whichever
+            # of NodeJSApplication/SpringBootApplication actually exists by that name (see that
+            # file's header for why the hardcoded version broke SpringBootApplication envs).
             #
             # $xrNamespace comes from this XR's own metadata (Crossplane v2, scope: Namespaced) -
             # NodeJSApplication and ApplicationEnvironment are always onboarded into the same
@@ -174,7 +231,7 @@ spec:
             spec:
               of:
                 apiVersion: catalog.idp.io/v1alpha1
-                kind: NodeJSApplication
+                kind: <<$appKind>>
                 resourceRef:
                   name: <<$appName>>
                   namespace: <<$xrNamespace>>
@@ -183,7 +240,7 @@ spec:
                 kind: ApplicationEnvironment
                 resourceRef:
                   name: <<$xrName>>
-              reason: <<printf "ApplicationEnvironment %s references NodeJSApplication %s via spec.appName - blocks app deletion until every referencing env is gone (idp/docs/service-catalog-design.md §0)" $xrName $appName | toJson>>
+              reason: <<printf "ApplicationEnvironment %s references %s %s via spec.appName - blocks app deletion until every referencing env is gone (idp/docs/service-catalog-design.md §0)" $xrName $appKind $appName | toJson>>
               replayDeletion: true
             ---
             # Seeds this app's tenants/<appName>/identity.yaml on the TARGET cluster's own
