@@ -1,0 +1,52 @@
+# Commits tenants/<app-name>/identity.yaml into this app's devCluster's own tenants
+# repo. Moved verbatim (mechanism unchanged) from nodejsapplication's own
+# cicd-identity-yaml.yaml - see that file's own git history for the full design
+# history (why identity.yaml absorbed app.yaml, why no .git suffix, why
+# $tenantsRepo is registry data not a hardcoded literal). Read by TWO
+# independent ApplicationSets: platform-cicd's own tenant-onboarding
+# ApplicationSet (stands up this app's real CICD pipeline) and idp's own
+# tenant-appprojects ApplicationSet (builds this app's AppProject).
+#
+# gitopsRepoUrl/appRepoUrl now come from spec (computed by the parent XR the
+# same way its own gitops-repo.yaml/src-repo.yaml templates do), not
+# recomputed here - this XRD stays agnostic to repo-naming convention.
+# $platformOwner stays a fixed literal (feeds only the payload's own
+# githubOwner field, unrelated to repo-naming) - same reasoning
+# xrds/tektoncicd.yaml's own header gives for not exposing it as a spec
+# field: it's a ProviderConfig-wide setting, not a per-app one.
+#
+# type: app (not infra), catalogNamespace: platform-catalog - fixed platform
+# convention, matches every other tenant's identity.yaml (platform-cicd/docs/
+# onboarding.md step 3).
+#
+# managementPolicies excluding "Delete" (matches applicationenvironment's own
+# cluster-identity-yaml.yaml precedent) - this resource takes over an
+# already-existing external file on the devCluster migration's second landing;
+# nothing here should ever delete tenants/<app>/identity.yaml on GitHub.
+<<- $platformOwner := "jfillman" >>
+<<- if $clusterOk >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-cicd-identity-yaml
+  annotations:
+    <<setResourceNameAnnotation "cicd-identity-yaml">>
+spec:
+  managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$tenantsRepo>>
+    file: <<printf "tenants/%s/identity.yaml" $xrName>>
+    overwriteOnCreate: true
+    content: |
+      platformIdentity:
+        appName: <<$xrName>>
+        type: app
+        gitopsRepoUrl: <<$spec.gitopsRepoUrl>>
+        appRepoUrl: <<$spec.appRepoUrl>>
+        githubOwner: <<$platformOwner>>
+        catalogNamespace: platform-catalog
+    commitMessage: <<printf "Onboard %s: add tenants/%s/identity.yaml for CICD pipeline onboarding" $xrName $xrName | toJson>>
+<<- end >>

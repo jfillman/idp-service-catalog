@@ -1,0 +1,268 @@
+# GENERATED FILE - do not hand-edit the pipeline's `input.inline.template` blocks
+# below. Edit templates/render-tektoncicd-resources/*.yaml or
+# templates/tektoncicd-status/*.yaml instead, then run ./build-composition.sh to
+# regenerate this file.
+#
+# Two function-go-templating steps, not one (compositions/nodejsapplication's own
+# pattern, extracted here): render-tektoncicd-resources composes the real
+# provider-github managed resources, tektoncicd-status patches the XR's own status
+# afterward with custom DevClusterReady/CicdOnboarded conditions (see that
+# template's own header for the mechanism and why). Both share the ONE
+# already-installed function-go-templating Function via source: Inline - registering
+# a second Function package pointing at the same reference corrupted Crossplane's
+# shared dependency-lock graph cluster-wide, a real bug hit live building the SLO
+# Composition (see compositions/slo/build-composition.sh's own header) - never
+# repeat that here.
+#
+# Delimiters: << >> instead of Go's default {{ }}, matching every other Composition
+# in this catalog.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: tektoncicds.catalog.idp.io
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.idp.io/v1alpha1
+    kind: TektonCICD
+  mode: Pipeline
+  pipeline:
+    - step: render-tektoncicd-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            # Real Crossplane extra-resources lookup against the cluster registry
+            # (gitops-cluster-dev/00-bootstrap/cluster-registry/, service-catalog-design.md §0) -
+            # moved verbatim (mechanism unchanged) from nodejsapplication's own
+            # 00-devcluster-gate.yaml, which springbootapplication's own copy already ported
+            # byte-for-byte before this extraction. See that file's own git history for the
+            # full "why" - $tenantsRepo comes from registry data, not a hardcoded literal,
+            # because kind-dev's tenants repo is a legacy name that breaks the
+            # gitops-cluster-<cluster>-tenants convention every upper cluster uses.
+            #
+            # $xrName here is $spec.appName (the OWNING app's name, passed in by the parent
+            # XR), not this XR's own metadata.name - TektonCICD is a distinct composed
+            # resource with its own name, but tenants/<app>/identity.yaml is keyed on the
+            # app's name, not this resource's.
+            #
+            # $clusterOk/$xrName/$devCluster/$tenantsRepo are declared once here, not
+            # redeclared per file below - Go template variables declared at this
+            # (unindented) scope persist for the rest of THIS pipeline step's execution
+            # across the --- separators. tektoncicd-status/status.yaml is a SEPARATE
+            # pipeline step (its own template execution scope) and redeclares this same
+            # lookup itself.
+            #
+            # Deliberately ONE YAML document in this file, not two - computing everything
+            # up front via template actions with no literal output, before the
+            # ExtraResources document itself, avoids an untested "does function-go-templating
+            # tolerate a blank rendered document" question entirely.
+            <<- $xrName := .observed.composite.resource.spec.appName >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $devCluster := $spec.devCluster >>
+            <<- $allExtra := .extraResources | default dict >>
+            <<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+            <<- $items := index $entry "items" | default list >>
+            <<- $clusterOk := false >>
+            <<- $clusterType := "" >>
+            <<- $cicdReady := "" >>
+            <<- $tenantsRepo := "" >>
+            <<- if gt (len $items) 0 >>
+              <<- $cm := (index $items 0).resource >>
+              <<- $clusterType = $cm.data.type >>
+              <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+              <<- $tenantsRepo = index $cm.data "tenantsRepo" | default "" >>
+              <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+                <<- $clusterOk = true >>
+              <<- end >>
+            <<- end >>
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ExtraResources
+            requirements:
+              devcluster-registry-entry:
+                apiVersion: v1
+                kind: ConfigMap
+                namespace: crossplane-system
+                matchName: <<$devCluster>>
+            ---
+            # Commits tenants/<app-name>/identity.yaml into this app's devCluster's own tenants
+            # repo. Moved verbatim (mechanism unchanged) from nodejsapplication's own
+            # cicd-identity-yaml.yaml - see that file's own git history for the full design
+            # history (why identity.yaml absorbed app.yaml, why no .git suffix, why
+            # $tenantsRepo is registry data not a hardcoded literal). Read by TWO
+            # independent ApplicationSets: platform-cicd's own tenant-onboarding
+            # ApplicationSet (stands up this app's real CICD pipeline) and idp's own
+            # tenant-appprojects ApplicationSet (builds this app's AppProject).
+            #
+            # gitopsRepoUrl/appRepoUrl now come from spec (computed by the parent XR the
+            # same way its own gitops-repo.yaml/src-repo.yaml templates do), not
+            # recomputed here - this XRD stays agnostic to repo-naming convention.
+            # $platformOwner stays a fixed literal (feeds only the payload's own
+            # githubOwner field, unrelated to repo-naming) - same reasoning
+            # xrds/tektoncicd.yaml's own header gives for not exposing it as a spec
+            # field: it's a ProviderConfig-wide setting, not a per-app one.
+            #
+            # type: app (not infra), catalogNamespace: platform-catalog - fixed platform
+            # convention, matches every other tenant's identity.yaml (platform-cicd/docs/
+            # onboarding.md step 3).
+            #
+            # managementPolicies excluding "Delete" (matches applicationenvironment's own
+            # cluster-identity-yaml.yaml precedent) - this resource takes over an
+            # already-existing external file on the devCluster migration's second landing;
+            # nothing here should ever delete tenants/<app>/identity.yaml on GitHub.
+            <<- $platformOwner := "jfillman" >>
+            <<- if $clusterOk >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-cicd-identity-yaml
+              annotations:
+                <<setResourceNameAnnotation "cicd-identity-yaml">>
+            spec:
+              managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$tenantsRepo>>
+                file: <<printf "tenants/%s/identity.yaml" $xrName>>
+                overwriteOnCreate: true
+                content: |
+                  platformIdentity:
+                    appName: <<$xrName>>
+                    type: app
+                    gitopsRepoUrl: <<$spec.gitopsRepoUrl>>
+                    appRepoUrl: <<$spec.appRepoUrl>>
+                    githubOwner: <<$platformOwner>>
+                    catalogNamespace: platform-catalog
+                commitMessage: <<printf "Onboard %s: add tenants/%s/identity.yaml for CICD pipeline onboarding" $xrName $xrName | toJson>>
+            <<- end >>
+            ---
+        delims:
+          left: "<<"
+          right: ">>"
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready
+    - step: tektoncicd-status
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            # Surfaces CI/CD-onboarding status as custom conditions, not an override of the
+            # standard Ready condition - moved verbatim (mechanism unchanged) from
+            # nodejsapplication's own cicd-onboarding-status/status.yaml. Ready itself
+            # stays real (whatever detect-ready, the pipeline step before this one,
+            # computes from the actual provider-github managed resources):
+            # function-go-templating's own docs explicitly reserve Ready/Healthy/Synced
+            # and error if a Composition tries to set them directly via its
+            # ClaimConditions mechanism.
+            #
+            # Invariant this step preserves (confirmed live before this extraction): when
+            # $clusterOk is false, render-tektoncicd-resources renders nothing at all, so
+            # detect-ready reports a vacuous Ready: True on THIS XR (nothing to wait on) -
+            # DevClusterReady/CicdOnboarded below carry the real signal instead. Do not
+            # add logic here that forces Ready: False on gate failure - that would couple
+            # this XR's own Ready to devCluster readiness, which nothing upstream expects.
+            #
+            # target: CompositeAndClaim writes to this XR's own status.conditions even
+            # though it's claimless (no claimNames on this XRD) - confirmed live, this is
+            # exactly the mechanism nodejsapplication's identical copy of this step
+            # already depends on today.
+            #
+            # DevClusterReady: redeclares the SAME ExtraResources requirement
+            # render-tektoncicd-resources/00-devcluster-gate.yaml already declares in its
+            # own, separate pipeline step - this step gets none of that step's variables
+            # for free.
+            <<- $xrName := .observed.composite.resource.spec.appName >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $devCluster := $spec.devCluster >>
+            <<- $allExtra := .extraResources | default dict >>
+            <<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+            <<- $items := index $entry "items" | default list >>
+            <<- $clusterOk := false >>
+            <<- $clusterType := "" >>
+            <<- $cicdReady := "" >>
+            <<- if gt (len $items) 0 >>
+              <<- $cm := (index $items 0).resource >>
+              <<- $clusterType = $cm.data.type >>
+              <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+              <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+                <<- $clusterOk = true >>
+              <<- end >>
+            <<- end >>
+            <<- $allObserved := .observed.resources | default dict >>
+            <<- $identityRes := index $allObserved "cicd-identity-yaml" | default dict >>
+            <<- $identityMR := index $identityRes "resource" | default dict >>
+            <<- $identityStatus := index $identityMR "status" | default dict >>
+            <<- $identityConditions := index $identityStatus "conditions" | default list >>
+            <<- $identityReady := false >>
+            <<- range $identityConditions >>
+              <<- if and (eq .type "Ready") (eq .status "True") >>
+                <<- $identityReady = true >>
+              <<- end >>
+            <<- end >>
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ExtraResources
+            requirements:
+              devcluster-registry-entry:
+                apiVersion: v1
+                kind: ConfigMap
+                namespace: crossplane-system
+                matchName: <<$devCluster>>
+            ---
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ClaimConditions
+            conditions:
+            <<- if $clusterOk >>
+              - type: DevClusterReady
+                status: "True"
+                reason: DevClusterReady
+                message: >-
+                  <<$devCluster>> is a registered, cicdReady dev cluster - <<$xrName>> onboards
+                  onto it.
+                target: CompositeAndClaim
+            <<- else >>
+              - type: DevClusterReady
+                status: "False"
+                reason: DevClusterNotReady
+                message: >-
+                  spec.devCluster (<<$devCluster>>) doesn't resolve to a registered ConfigMap
+                  with type: dev and cicdReady: "true" in the cluster registry
+                  (gitops-cluster-dev/00-bootstrap/cluster-registry/) - no CICD-onboarding
+                  resources are rendered until it does, rather than partially succeeding
+                  against a cluster that may not exist or isn't ready yet.
+                target: CompositeAndClaim
+            <<- end >>
+            <<- if $identityReady >>
+              - type: CicdOnboarded
+                status: "True"
+                reason: CicdOnboarded
+                message: >-
+                  <<$xrName>>'s tenants/<<$xrName>>/identity.yaml committed to its devCluster's
+                  tenants repo - platform-cicd's tenant-onboarding ApplicationSet picks it up on
+                  its next poll and stands up the real app-<<$xrName>>-cicd CICD pipeline.
+                target: CompositeAndClaim
+            <<- else >>
+              - type: CicdOnboarded
+                status: "False"
+                reason: CicdOnboardingPending
+                message: >-
+                  tenants/<<$xrName>>/identity.yaml has been committed to its devCluster's
+                  tenants repo, but that RepositoryFile isn't Ready yet (provider-github still
+                  reconciling the commit), or spec.devCluster isn't DevClusterReady yet (see
+                  that condition). Resolves itself once it is - no XR edit needed.
+                target: CompositeAndClaim
+            <<- end >>
+            ---
+            ---
+        delims:
+          left: "<<"
+          right: ">>"

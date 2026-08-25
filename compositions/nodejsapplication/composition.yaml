@@ -98,104 +98,6 @@ spec:
                 namespace: crossplane-system
                 matchName: <<$devCluster>>
             ---
-            # Commits tenants/<app-name>/identity.yaml into this app's devCluster's own tenants
-            # repo (today, for kind-dev: gitops-cluster-dev-tenants) - the ONE per-app tenant
-            # identity file on this cluster (2026-08-18: absorbed app.yaml, which
-            # used to sit right next to this file with an overlapping-but-not-identical field set -
-            # see "identity.yaml absorbs app.yaml" below). Read by TWO independent ApplicationSets
-            # now: platform-cicd's own tenant-onboarding ApplicationSet (charts/
-            # platform-cicd-control-plane/templates/argocd/tenant-onboarding-applicationset.yaml,
-            # .Values.tenantsRepoUrl, pointed here via hack/values-kind-dev.yaml) to stand up this
-            # app's CICD pipeline (Tekton/PaC Application, RBAC, Triggers - see
-            # platform-cicd/docs/onboarding.md's step 3), and idp's own tenant-appprojects
-            # ApplicationSet (gitops-cluster-dev/02-argocd-apps/tenant-appprojects/) to build this
-            # app's AppProject(s) - previously that second consumer read a separate tenants/<app>/
-            # app.yaml, written by this same step (see git history for that file's own last
-            # version). This is the real CICD-onboarding-commit step cicd-onboarding-status/
-            # status.yaml's own header comment named as still-stubbed - built 2026-08-15 once
-            # platform-cicd's control plane actually landed on kind-dev (see idp/docs/
-            # service-catalog-design.md's NodeJSApplication note), redirected here from a
-            # dedicated platform-cicd-kind-dev-tenants repo 2026-08-16 (see $tenantsRepo below).
-            #
-            # identity.yaml absorbs app.yaml (2026-08-18): the two files were "almost identical,
-            # one a subset of the other," sitting side by side in the same commit - but NOT
-            # byte-for-byte mergeable as-is, because their overlapping gitopsRepoUrl/appRepoUrl
-            # fields deliberately held DIFFERENT string values. app.yaml's were .git-suffixed
-            # (matching ArgoCD's own repoURL convention); identity.yaml's never were, because PaC
-            # matches Repository CR spec.url against GitHub's webhook payload URL with an EXACT
-            # string compare (pkg/matcher.MatchEventURLRepo, only trims a trailing slash), and that
-            # payload URL never has .git - a shared .git-suffixed value broke PaC matching for
-            # every app, confirmed live 2026-08-16 (checkout-api's first real push failed with
-            # "cannot find a repository match"). Resolved by standardizing on ONE convention,
-            # system-wide: no .git suffix anywhere (this file's own values were already correct;
-            # ArgoCD's side is the one that changed - see gitops-cluster-dev's tenant-appprojects
-            # ApplicationSet for why dropping .git there is safe, ArgoCD normalizes it away when
-            # matching sourceRepos/repoURL, confirmed live during this same change). The
-            # pre-existing hand-authored kind-observe identity.yaml (platform-cicd/tenants/
-            # nodejs-demo-app/identity.yaml) never had .git here either - this restores that
-            # convention rather than introducing a new one.
-            #
-            # $tenantsRepo (2026-08-16, redirected): previously a dedicated
-            # platform-cicd-kind-dev-tenants repo, eliminated once live history showed it only ever
-            # held throwaway verification apps and both platform-cicd/docs/onboarding.md and
-            # idp/README.md confirmed kind-dev's platform-cicd instance is idp-exclusive (unlike
-            # kind-observe, which hosts real, independent, non-idp tenants and keeps its own
-            # platform-cicd.git-relative tenants/ - unaffected by this change). Confirmed live no
-            # AppProject change is needed either: platform-onboarding's sourceRepos already
-            # wildcards https://github.com/jfillman/*, and tenantsRepoUrl is only ever a generator
-            # input, never gated by sourceRepos at all.
-            #
-            # 2026-08-18: $tenantsRepo/gate now come from 00-devcluster-gate.yaml (same pipeline
-            # step, persists across this file) instead of a hardcoded "gitops-cluster-dev-tenants"
-            # literal - this Bootstrap-tier XRD was "permanently centralized on kind-dev" only as
-            # long as exactly one dev cluster existed; spec.devCluster is now real and required,
-            # and this resource only renders once that cluster resolves live against the registry
-            # (type: dev, cicdReady: "true") - see the gate file's own header.
-            #
-            # type: app (not infra) - NodeJSApplication only ever provisions regular applications,
-            # never platform-adjacent services, so this is a fixed literal, not a spec field.
-            # catalogNamespace: platform-catalog - fixed platform convention, matches every other
-            # tenant's identity.yaml (platform-cicd/docs/onboarding.md step 3).
-            #
-            # All six platformIdentity fields are present even though platform-cicd's own docs allow
-            # "" for unused ones - gitopsRepoUrl/appRepoUrl are always real here (NodeJSApplication
-            # always provisions both repos), so there's nothing to leave empty.
-            <<- $platformOwner := "jfillman" >>
-            <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s" $platformOwner $xrName >>
-            <<- $appRepoUrl := printf "https://github.com/%s/%s" $platformOwner $xrName >>
-            <<- if $clusterOk >>
-            apiVersion: repo.github.m.upbound.io/v1alpha1
-            kind: RepositoryFile
-            metadata:
-              name: <<$xrName>>-cicd-identity-yaml
-              annotations:
-                <<setResourceNameAnnotation "cicd-identity-yaml">>
-            spec:
-              # managementPolicies excluding "Delete" (matches applicationenvironment's own
-              # cluster-identity-yaml.yaml precedent) - landed ahead of the TektonCICD extraction so
-              # that removing this composition-resource-name from the pipeline orphans only the k8s
-              # RepositoryFile CR, not the real tenants/<app>/identity.yaml file on GitHub. Without
-              # this, the extraction would issue a real DELETE against the GitHub API for every
-              # already-onboarded app the moment it landed.
-              managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
-              providerConfigRef:
-                kind: ClusterProviderConfig
-                name: default
-              forProvider:
-                repository: <<$tenantsRepo>>
-                file: <<printf "tenants/%s/identity.yaml" $xrName>>
-                overwriteOnCreate: true
-                content: |
-                  platformIdentity:
-                    appName: <<$xrName>>
-                    type: app
-                    gitopsRepoUrl: <<$gitopsRepoUrl>>
-                    appRepoUrl: <<$appRepoUrl>>
-                    githubOwner: <<$platformOwner>>
-                    catalogNamespace: platform-catalog
-                commitMessage: <<printf "Onboard %s: add tenants/%s/identity.yaml for CICD pipeline onboarding" $xrName $xrName | toJson>>
-            <<- end >>
-            ---
             # Empty, scaffolded gitops-<app-name> repo - idp/docs/service-catalog-design.md Item 1/2:
             # "gitops-<app-name> gets created here, empty, rather than by item 3 [ApplicationEnvironment]
             # - its lifecycle is app-level (create once)". Just a README for now; the real
@@ -568,6 +470,36 @@ spec:
                   resource's own status for details.
                 commitMessage: "NodeJSApplication scaffold: README.md"
             ---
+            # Composes a TektonCICD child XR directly - not a GitOps xr-requests commit like
+            # SecretStore's own sibling template (secretstore-xr.yaml) uses. TektonCICD only
+            # calls the GitHub API (provider-github, cluster-agnostic, reconciled centrally,
+            # same as every other resource this pipeline step already composes), so it has
+            # none of SecretStore's cross-cluster-credential blocker - see
+            # xrds/tektoncicd.yaml's own header for the full reasoning.
+            #
+            # Unconditional - not locally gated on $clusterOk. TektonCICD's own internal
+            # devcluster gate (compositions/tektoncicd/templates/render-tektoncicd-resources/
+            # 00-devcluster-gate.yaml) now owns that decision; gating here too would just
+            # move the duplication this extraction removes to a different file.
+            #
+            # gitopsRepoUrl/appRepoUrl computed the same way gitops-repo.yaml/src-repo.yaml's
+            # own literals do ($platformOwner "jfillman" - a ProviderConfig-wide credential
+            # setting, not a per-app field, same reasoning xrds/nodejsapplication.yaml's own
+            # header gives for not exposing owner as a spec field).
+            <<- $platformOwner := "jfillman" >>
+            apiVersion: catalog.idp.io/v1alpha1
+            kind: TektonCICD
+            metadata:
+              name: <<$xrName>>-tektoncicd
+              annotations:
+                <<setResourceNameAnnotation "tektoncicd">>
+            spec:
+              appName: <<$xrName>>
+              gitopsRepoUrl: <<printf "https://github.com/%s/gitops-%s" $platformOwner $xrName>>
+              appRepoUrl: <<printf "https://github.com/%s/%s" $platformOwner $xrName>>
+              devCluster: <<$devCluster>>
+            ---
+            ---
         delims:
           left: "<<"
           right: ">>"
@@ -583,117 +515,69 @@ spec:
         source: Inline
         inline:
           template: |
-            # Surfaces the CICD-onboarding status as a custom condition, not an override of the
-            # standard Ready condition - see xrds/nodejsapplication.yaml's own header and
-            # idp/docs/service-catalog-design.md Item 1/2's "real known gap" note for what this was
-            # and why. Ready itself stays real (whatever detect-ready, the pipeline step before this
-            # one, computes from the actual provider-github managed resources): function-go-
-            # templating's own docs (github.com/crossplane-contrib/function-go-templating,
-            # "Setting Conditions on the Claim and Composite") explicitly reserve
-            # Ready/Healthy/Synced and error if a Composition tries to set them directly via its
-            # ClaimConditions mechanism - confirmed live, not guessed, after an earlier attempt at
-            # patching status.conditions directly (matching the XR's own apiVersion/kind, no
-            # composition-resource-name annotation - a real, but different, documented mechanism for
-            # a different purpose) rendered with zero effect via crossplane render.
+            # Proxies DevClusterReady/CicdOnboarded straight from the composed TektonCICD
+            # child's own status.conditions onto this XR's status - both conditions are now
+            # computed entirely inside compositions/tektoncicd's own Composition (see
+            # xrds/tektoncicd.yaml's own header for why CI/CD onboarding was extracted there),
+            # this step just re-surfaces them here so `kubectl describe nodejsapplication/<app>`
+            # still shows both directly on the app, same UX as before the extraction.
             #
-            # Real as of 2026-08-15 (platform-cicd-on-kind-dev migration landed - see the doc note
-            # above): checks the actual observed status of the cicd-identity-yaml RepositoryFile
-            # render-github-resources composed this same pipeline invocation (standard Crossplane
-            # managed-resource Ready condition, index [0] since function-go-templating's own
-            # ClaimConditions mechanism - same one this step itself uses - doesn't expose a
-            # find-by-type helper for reading observed conditions, only setting them). Same
-            # redeclare-don't-couple convention applicationenvironment/templates/status/status.yaml
-            # already established for extraResources - each pipeline step has its own template
-            # execution scope.
+            # Same read-the-observed-resource-map mechanism this step used pre-extraction to
+            # read the raw cicd-identity-yaml RepositoryFile's own Ready condition - just
+            # retargeted one level: "tektoncicd" (setResourceNameAnnotation in
+            # render-github-resources/tekton-cicd-child.yaml) instead of "cicd-identity-yaml".
+            # function-go-templating's ClaimConditions mechanism has no find-by-type helper for
+            # reading observed conditions, only setting them, so this is a plain range/match,
+            # same as every other status-proxy step in this catalog.
             #
-            # DevClusterReady (2026-08-18): redeclares the SAME ExtraResources requirement
-            # render-github-resources/00-devcluster-gate.yaml already declares in its own,
-            # separate pipeline step - this step gets none of that step's variables for free.
-            # Surfaces spec.devCluster's live registry validation as its own condition (same
-            # "structural backstop, refuse rather than partially succeed" reporting
-            # applicationenvironment's ClusterReady condition already established) - when this
-            # is False, CicdOnboarded staying False too is expected/correct, not a second bug:
-            # nothing in render-github-resources rendered at all (00-devcluster-gate.yaml's own
-            # $clusterOk gates cicd-identity-yaml.yaml and secretstore-xr.yaml both).
+            # BOTH conditions need this treatment, not just CicdOnboarded - DevClusterReady
+            # would otherwise silently disappear from this XR's own status.
             <<- $xrName := .observed.composite.resource.metadata.name >>
-            <<- $spec := .observed.composite.resource.spec >>
-            <<- $devCluster := $spec.devCluster >>
-            <<- $allExtra := .extraResources | default dict >>
-            <<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
-            <<- $items := index $entry "items" | default list >>
-            <<- $clusterOk := false >>
-            <<- $clusterType := "" >>
-            <<- $cicdReady := "" >>
-            <<- if gt (len $items) 0 >>
-              <<- $cm := (index $items 0).resource >>
-              <<- $clusterType = $cm.data.type >>
-              <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
-              <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
-                <<- $clusterOk = true >>
-              <<- end >>
-            <<- end >>
             <<- $allObserved := .observed.resources | default dict >>
-            <<- $identityRes := index $allObserved "cicd-identity-yaml" | default dict >>
-            <<- $identityMR := index $identityRes "resource" | default dict >>
-            <<- $identityStatus := index $identityMR "status" | default dict >>
-            <<- $identityConditions := index $identityStatus "conditions" | default list >>
-            <<- $identityReady := false >>
-            <<- range $identityConditions >>
-              <<- if and (eq .type "Ready") (eq .status "True") >>
-                <<- $identityReady = true >>
+            <<- $childRes := index $allObserved "tektoncicd" | default dict >>
+            <<- $childXR := index $childRes "resource" | default dict >>
+            <<- $childStatus := index $childXR "status" | default dict >>
+            <<- $childConditions := index $childStatus "conditions" | default list >>
+            <<- $devClusterCondition := dict >>
+            <<- $cicdOnboardedCondition := dict >>
+            <<- range $childConditions >>
+              <<- if eq .type "DevClusterReady" >>
+                <<- $devClusterCondition = . >>
+              <<- else if eq .type "CicdOnboarded" >>
+                <<- $cicdOnboardedCondition = . >>
               <<- end >>
             <<- end >>
-            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
-            kind: ExtraResources
-            requirements:
-              devcluster-registry-entry:
-                apiVersion: v1
-                kind: ConfigMap
-                namespace: crossplane-system
-                matchName: <<$devCluster>>
-            ---
             apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
             kind: ClaimConditions
             conditions:
-            <<- if $clusterOk >>
+            <<- if $devClusterCondition >>
               - type: DevClusterReady
-                status: "True"
-                reason: DevClusterReady
-                message: >-
-                  <<$devCluster>> is a registered, cicdReady dev cluster - <<$xrName>> onboards
-                  onto it.
+                status: <<$devClusterCondition.status | toJson>>
+                reason: <<$devClusterCondition.reason>>
+                message: <<$devClusterCondition.message | toJson>>
                 target: CompositeAndClaim
             <<- else >>
               - type: DevClusterReady
                 status: "False"
                 reason: DevClusterNotReady
                 message: >-
-                  spec.devCluster (<<$devCluster>>) doesn't resolve to a registered ConfigMap
-                  with type: dev and cicdReady: "true" in the cluster registry
-                  (gitops-cluster-dev/00-bootstrap/cluster-registry/) - no CICD-onboarding or
-                  secrets-infrastructure resources are rendered until it does, rather than
-                  partially succeeding against a cluster that may not exist or isn't ready yet.
+                  Waiting on the composed TektonCICD child (<<$xrName>>-tektoncicd) to report
+                  its own DevClusterReady condition - resolves itself once it does.
                 target: CompositeAndClaim
             <<- end >>
-            <<- if $identityReady >>
+            <<- if $cicdOnboardedCondition >>
               - type: CicdOnboarded
-                status: "True"
-                reason: CicdOnboarded
-                message: >-
-                  <<$xrName>>'s tenants/<<$xrName>>/identity.yaml committed to its devCluster's
-                  tenants repo - platform-cicd's tenant-onboarding ApplicationSet picks it up on
-                  its next poll and stands up the real app-<<$xrName>>-cicd CICD pipeline.
+                status: <<$cicdOnboardedCondition.status | toJson>>
+                reason: <<$cicdOnboardedCondition.reason>>
+                message: <<$cicdOnboardedCondition.message | toJson>>
                 target: CompositeAndClaim
             <<- else >>
               - type: CicdOnboarded
                 status: "False"
                 reason: CicdOnboardingPending
                 message: >-
-                  <<$xrName>>'s src/gitops repos and tenant identity are provisioned, and
-                  tenants/<<$xrName>>/identity.yaml has been committed to its devCluster's
-                  tenants repo, but that RepositoryFile isn't Ready yet (provider-github still
-                  reconciling the commit), or spec.devCluster isn't DevClusterReady yet (see
-                  that condition). Resolves itself once it is - no XR edit needed.
+                  Waiting on the composed TektonCICD child (<<$xrName>>-tektoncicd) to report
+                  its own CicdOnboarded condition - resolves itself once it does.
                 target: CompositeAndClaim
             <<- end >>
             ---

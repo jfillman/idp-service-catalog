@@ -1,0 +1,24 @@
+# Composes a TektonCICD child XR directly - not a GitOps xr-requests commit like
+# SecretStore's own sibling template (secretstore-xr.yaml) uses. TektonCICD only
+# calls the GitHub API (provider-github, cluster-agnostic, reconciled centrally,
+# same as every other resource this pipeline step already composes), so it has
+# none of SecretStore's cross-cluster-credential blocker - see
+# xrds/tektoncicd.yaml's own header for the full reasoning. Identical mechanism to
+# nodejsapplication's own tekton-cicd-child.yaml (straight port, not a redesign).
+#
+# Unconditional - not locally gated on $clusterOk. TektonCICD's own internal
+# devcluster gate now owns that decision; gating here too would just move the
+# duplication this extraction removes to a different file.
+<<- $platformOwner := "jfillman" >>
+apiVersion: catalog.idp.io/v1alpha1
+kind: TektonCICD
+metadata:
+  name: <<$xrName>>-tektoncicd
+  annotations:
+    <<setResourceNameAnnotation "tektoncicd">>
+spec:
+  appName: <<$xrName>>
+  gitopsRepoUrl: <<printf "https://github.com/%s/gitops-%s" $platformOwner $xrName>>
+  appRepoUrl: <<printf "https://github.com/%s/%s" $platformOwner $xrName>>
+  devCluster: <<$devCluster>>
+---

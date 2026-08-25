@@ -1,0 +1,106 @@
+# Surfaces CI/CD-onboarding status as custom conditions, not an override of the
+# standard Ready condition - moved verbatim (mechanism unchanged) from
+# nodejsapplication's own cicd-onboarding-status/status.yaml. Ready itself
+# stays real (whatever detect-ready, the pipeline step before this one,
+# computes from the actual provider-github managed resources):
+# function-go-templating's own docs explicitly reserve Ready/Healthy/Synced
+# and error if a Composition tries to set them directly via its
+# ClaimConditions mechanism.
+#
+# Invariant this step preserves (confirmed live before this extraction): when
+# $clusterOk is false, render-tektoncicd-resources renders nothing at all, so
+# detect-ready reports a vacuous Ready: True on THIS XR (nothing to wait on) -
+# DevClusterReady/CicdOnboarded below carry the real signal instead. Do not
+# add logic here that forces Ready: False on gate failure - that would couple
+# this XR's own Ready to devCluster readiness, which nothing upstream expects.
+#
+# target: CompositeAndClaim writes to this XR's own status.conditions even
+# though it's claimless (no claimNames on this XRD) - confirmed live, this is
+# exactly the mechanism nodejsapplication's identical copy of this step
+# already depends on today.
+#
+# DevClusterReady: redeclares the SAME ExtraResources requirement
+# render-tektoncicd-resources/00-devcluster-gate.yaml already declares in its
+# own, separate pipeline step - this step gets none of that step's variables
+# for free.
+<<- $xrName := .observed.composite.resource.spec.appName >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $devCluster := $spec.devCluster >>
+<<- $allExtra := .extraResources | default dict >>
+<<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+<<- $items := index $entry "items" | default list >>
+<<- $clusterOk := false >>
+<<- $clusterType := "" >>
+<<- $cicdReady := "" >>
+<<- if gt (len $items) 0 >>
+  <<- $cm := (index $items 0).resource >>
+  <<- $clusterType = $cm.data.type >>
+  <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+  <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+    <<- $clusterOk = true >>
+  <<- end >>
+<<- end >>
+<<- $allObserved := .observed.resources | default dict >>
+<<- $identityRes := index $allObserved "cicd-identity-yaml" | default dict >>
+<<- $identityMR := index $identityRes "resource" | default dict >>
+<<- $identityStatus := index $identityMR "status" | default dict >>
+<<- $identityConditions := index $identityStatus "conditions" | default list >>
+<<- $identityReady := false >>
+<<- range $identityConditions >>
+  <<- if and (eq .type "Ready") (eq .status "True") >>
+    <<- $identityReady = true >>
+  <<- end >>
+<<- end >>
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ExtraResources
+requirements:
+  devcluster-registry-entry:
+    apiVersion: v1
+    kind: ConfigMap
+    namespace: crossplane-system
+    matchName: <<$devCluster>>
+---
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ClaimConditions
+conditions:
+<<- if $clusterOk >>
+  - type: DevClusterReady
+    status: "True"
+    reason: DevClusterReady
+    message: >-
+      <<$devCluster>> is a registered, cicdReady dev cluster - <<$xrName>> onboards
+      onto it.
+    target: CompositeAndClaim
+<<- else >>
+  - type: DevClusterReady
+    status: "False"
+    reason: DevClusterNotReady
+    message: >-
+      spec.devCluster (<<$devCluster>>) doesn't resolve to a registered ConfigMap
+      with type: dev and cicdReady: "true" in the cluster registry
+      (gitops-cluster-dev/00-bootstrap/cluster-registry/) - no CICD-onboarding
+      resources are rendered until it does, rather than partially succeeding
+      against a cluster that may not exist or isn't ready yet.
+    target: CompositeAndClaim
+<<- end >>
+<<- if $identityReady >>
+  - type: CicdOnboarded
+    status: "True"
+    reason: CicdOnboarded
+    message: >-
+      <<$xrName>>'s tenants/<<$xrName>>/identity.yaml committed to its devCluster's
+      tenants repo - platform-cicd's tenant-onboarding ApplicationSet picks it up on
+      its next poll and stands up the real app-<<$xrName>>-cicd CICD pipeline.
+    target: CompositeAndClaim
+<<- else >>
+  - type: CicdOnboarded
+    status: "False"
+    reason: CicdOnboardingPending
+    message: >-
+      tenants/<<$xrName>>/identity.yaml has been committed to its devCluster's
+      tenants repo, but that RepositoryFile isn't Ready yet (provider-github still
+      reconciling the commit), or spec.devCluster isn't DevClusterReady yet (see
+      that condition). Resolves itself once it is - no XR edit needed.
+    target: CompositeAndClaim
+<<- end >>
+---

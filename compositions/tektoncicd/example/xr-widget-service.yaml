@@ -1,0 +1,14 @@
+# TektonCICD is normally composed directly by NodeJSApplication/SpringBootApplication's
+# own Compositions, not standalone-created - this fixture mirrors the shape those
+# parents' new tekton-cicd-child.yaml template renders, for offline testing this
+# Composition in isolation.
+apiVersion: catalog.idp.io/v1alpha1
+kind: TektonCICD
+metadata:
+  name: widget-service-tektoncicd
+  namespace: demo-apps
+spec:
+  appName: widget-service
+  gitopsRepoUrl: https://github.com/jfillman/gitops-widget-service
+  appRepoUrl: https://github.com/jfillman/widget-service
+  devCluster: kind-dev

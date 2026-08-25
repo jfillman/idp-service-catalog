@@ -9,6 +9,28 @@ this repo is where it's actually built.
 
 ## Status
 
+**`TektonCICD` XRD + Composition — CI/CD onboarding extracted out of
+`NodeJSApplication`/`SpringBootApplication` into its own XRD, offline-verified,
+live rollout pending.** `xrds/tektoncicd.yaml` + `compositions/tektoncicd/` replace the
+~150 lines of near-verbatim-duplicated devCluster-gate/`identity.yaml`-commit/status
+logic each of the two app XRDs carried (flagged while discussing which stack to add
+next — a third stack would have copied it a third time). Named for the actual backend
+(`platform-cicd`'s Tekton/PaC pipeline), not a generic abstraction — a future
+alternate CI/CD backend gets its own separate XRD, not a `backend` field on this one.
+Composed as a normal child XR directly inside each app XRD's own Composition pipeline
+(a new pattern for this catalog — every prior "one catalog XRD from within another"
+relationship, e.g. `SecretStore`, goes through a GitOps `xr-requests` commit instead;
+that indirection exists to let a resource land on a remote target cluster, which
+`TektonCICD` never needs since it only calls the GitHub API). Each parent's own
+`cicd-onboarding-status` step now proxies `DevClusterReady`/`CicdOnboarded` from the
+composed child's own conditions, preserving the pre-extraction UX
+(`kubectl describe nodejsapplication/<app>` still shows both directly on the app).
+Rollout is two separate `idp-service-catalog` tags, not one: a `managementPolicies`
+safety fix (excluding `Delete` from the identity.yaml `RepositoryFile`, `v0.3.43`,
+already live-verified on all three onboarded apps) landed first, so the second tag's
+orphaning of the old composition-resource-name deletes only the k8s CR, not the real
+GitHub file — see `idp/docs/service-catalog-design.md` Item 1/2 for the full writeup.
+
 **`SpringBootApplication` XRD + Composition — Item 1/2's second Bootstrap-tier stack,
 done, live-verified end-to-end on `kind-dev` 2026-08-24.** `xrds/springbootapplication.yaml`
 + `compositions/springbootapplication/` — a structural port of `NodeJSApplication` onto

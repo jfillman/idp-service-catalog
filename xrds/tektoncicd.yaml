@@ -1,0 +1,101 @@
+# Extracted out of NodeJSApplication/SpringBootApplication's own Compositions -
+# both carried ~150 lines of near-verbatim-duplicated "CI/CD onboarding" logic
+# (SpringBootApplication's own template headers literally called it "a straight
+# port, not a redesign" of NodeJSApplication's). This XRD is that logic, made
+# real and shared: the devCluster readiness gate + the tenants/<app>/identity.yaml
+# commit that platform-cicd's tenant-onboarding ApplicationSet and idp's own
+# tenant-appprojects ApplicationSet both read.
+#
+# Named TektonCICD, not a generic "CicdOnboarding" - this XRD names the actual
+# backend (platform-cicd's Tekton/PaC pipeline), not an abstraction over
+# backends. A future alternate CI/CD backend gets its OWN separate XRD
+# (composed in by whichever app-XRDs choose to support it), not a `backend`
+# field/discriminated union bolted onto this one - there's nothing to
+# generalize correctly yet with only one real backend, so this XRD doesn't try.
+#
+# Composed as a NORMAL child XR directly inside NodeJSApplication/
+# SpringBootApplication's own Composition pipeline - a new pattern for this
+# catalog (every prior "one catalog XRD from within another" relationship,
+# e.g. SecretStore, goes through a GitOps xr-requests commit instead). That
+# precedent doesn't apply here: SecretStore's indirection exists because its
+# composed ClusterSecretStore has to land ON the target cluster, and no
+# cluster may hold another cluster's API credentials (idp/docs/
+# service-catalog-design.md:1449-1468) - TektonCICD only ever calls the GitHub
+# API via provider-github, which is cluster-agnostic and already reconciled
+# centrally, same as every other resource NodeJSApplication/SpringBootApplication
+# already compose directly. Composing it directly (instead of the GitOps
+# indirection) also preserves live status feedback to the parent, which the
+# SecretStore design deliberately gave up (NodeJSApplication never reads
+# SecretStore's own status today).
+#
+# apiextensions.crossplane.io/v2, scope: Namespaced, no claimNames - matches
+# every other XRD in this catalog. No status: schema block either, matching
+# four of the five existing siblings - standard injected status.conditions
+# only (DevClusterReady, CicdOnboarded - see compositions/tektoncicd/
+# templates/status.yaml).
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: tektoncicds.catalog.idp.io
+spec:
+  group: catalog.idp.io
+  names:
+    kind: TektonCICD
+    plural: tektoncicds
+    singular: tektoncicd
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - appName
+                - gitopsRepoUrl
+                - appRepoUrl
+                - devCluster
+              properties:
+                appName:
+                  type: string
+                  description: >-
+                    The owning app's name (NodeJSApplication/SpringBootApplication's
+                    own $xrName). This XR is a distinct composed resource with its
+                    own metadata.name, so unlike its parent, appName can't be
+                    inferred from metadata.name and must be passed explicitly -
+                    it's what tenants/<appName>/identity.yaml is keyed on.
+                  minLength: 1
+                gitopsRepoUrl:
+                  type: string
+                  description: >-
+                    Full URL of the app's gitops-<appName> repo, computed by the
+                    parent XR the same way its own gitops-repo.yaml template does.
+                    Passed in rather than recomputed here so this XRD stays
+                    agnostic to repo-naming convention.
+                  minLength: 1
+                appRepoUrl:
+                  type: string
+                  description: >-
+                    Full URL of the app's src repo, computed by the parent XR the
+                    same way its own src-repo.yaml template does. Passed in rather
+                    than recomputed here so this XRD stays agnostic to
+                    repo-naming convention.
+                  minLength: 1
+                devCluster:
+                  type: string
+                  description: >-
+                    Which dev cluster this app onboards onto - passed straight
+                    through from the parent XR's own spec.devCluster. Checked live
+                    against the cluster registry (gitops-cluster-dev/00-bootstrap/
+                    cluster-registry/) via a Crossplane extra-resources lookup:
+                    must resolve to a ConfigMap with type: dev and
+                    cicdReady: "true", or this Composition renders nothing and
+                    reports DevClusterReady: False rather than partially
+                    succeeding - see compositions/tektoncicd/templates/
+                    00-devcluster-gate.yaml.
+                  minLength: 1
+          required: ["spec"]
