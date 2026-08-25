@@ -9,6 +9,25 @@ this repo is where it's actually built.
 
 ## Status
 
+**`SpringBootApplication` XRD + Composition — Item 1/2's second Bootstrap-tier stack,
+done, live-verified end-to-end on `kind-dev` 2026-08-24.** `xrds/springbootapplication.yaml`
++ `compositions/springbootapplication/` — a structural port of `NodeJSApplication` onto
+Java/Spring Boot: same devCluster-gated onboarding mechanism, same six-field
+`identity.yaml`, same `CicdOnboarded`-not-`Ready` status convention. Stack-specific
+pieces: `spec.javaVersion`/`spec.buildTool` (replacing `nodeVersion`/`packageManager`)
+and `spec.groupId` (Maven groupId / Gradle group, and this app's single flat Java
+package — see the XRD's own header for why it's not `groupId`+artifactId nested). The
+Dockerfile is genuinely multi-stage (JDK build stage, bare JRE runtime stage), a real
+difference from `NodeJSApplication`'s single-stage script, not just a style choice.
+Live-verified via a throwaway `springbootapp-verify-test` app (real `Repository`/
+`RepositoryFile` creation against GitHub, `pom.xml`/`identity.yaml`/
+`xr-requests/secretstore.yaml` content confirmed via the GitHub API,
+`DevClusterReady`/`CicdOnboarded`/`Ready` all reached `True`); the `gradle` `buildTool`
+branch was exercised via `crossplane render` only (`example/xr-gradle-custom.yaml`), not
+a real cluster apply. See `idp/docs/service-catalog-design.md` Item 1/2 for the full
+writeup, including a revisited-and-declined "shared Function" refactor decision now
+that both stacks are built.
+
 **`SecretStore` XRD + `infisical-secretstore-operator` — Item 8, done, live-verified
 end-to-end 2026-08-17.** `xrds/secretstore.yaml` + `compositions/secretstore/`
 render an `InfisicalProject` CR (reconciled by a new kopf/Python operator,
