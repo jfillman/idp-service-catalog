@@ -1,0 +1,56 @@
+# Empty, scaffolded gitops-<app-name> repo - identical mechanism to
+# nodejsapplication's own gitops-repo.yaml (straight port, not a redesign). Just a
+# README for now; the real <cluster>/<env>/values.yaml layout gets populated once
+# ApplicationEnvironment exists.
+#
+# crossplane.io/external-name below - same fix, same reasoning as src-repo.yaml's own
+# header: a cluster rebuild's fresh Repository MR has no external-name, so
+# provider-github tries to Create a repo that already exists on GitHub and 422s.
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $visibility := $spec.visibility >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: Repository
+metadata:
+  name: <<$xrName>>-gitops
+  annotations:
+    <<setResourceNameAnnotation "gitops-repo">>
+    crossplane.io/external-name: <<printf "gitops-%s" $xrName>>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    name: <<printf "gitops-%s" $xrName>>
+    description: <<printf "GitOps deployment repo for %s - <cluster>/<env>/values.yaml per environment" $xrName | toJson>>
+    visibility: <<$visibility>>
+    autoInit: true
+    securityAndAnalysis:
+      - secretScanning:
+          - status: disabled
+        secretScanningPushProtection:
+          - status: disabled
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-gitops-readme
+  annotations:
+    <<setResourceNameAnnotation "gitops-repo-readme">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<printf "gitops-%s" $xrName>>
+    file: README.md
+    overwriteOnCreate: true
+    content: |
+      # gitops-<<$xrName>>
+
+      GitOps deployment repo for `<<$xrName>>`, scaffolded by `PythonApplication`
+      (idp-service-catalog). Empty until this app's first `ApplicationEnvironment`
+      resource is created - each environment gets its own `<cluster>/<env>/values.yaml`
+      here, rendered by `idp-application` (idp-service-catalog's shared Helm chart).
+    commitMessage: "PythonApplication scaffold: README.md"

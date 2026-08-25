@@ -1,0 +1,13 @@
+# crossplane render doesn't run the XRD's own OpenAPI schema defaulting - this fixture
+# spells out the XRD's actual defaults explicitly. See ../../../xrds/goapplication.yaml
+# for these being schema-level defaults, not template-side ones.
+apiVersion: catalog.idp.io/v1alpha1
+kind: GoApplication
+metadata:
+  name: widget-service
+  namespace: demo-apps
+spec:
+  devCluster: kind-dev
+  goVersion: "1.23"
+  port: 8080
+  visibility: private

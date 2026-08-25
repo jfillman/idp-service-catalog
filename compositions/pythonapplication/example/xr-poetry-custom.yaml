@@ -1,0 +1,12 @@
+# Exercises the poetry packageManager branch (pyproject.toml, not requirements.txt).
+apiVersion: catalog.idp.io/v1alpha1
+kind: PythonApplication
+metadata:
+  name: widget-service
+  namespace: demo-apps
+spec:
+  devCluster: kind-dev
+  pythonVersion: "3.13"
+  packageManager: poetry
+  port: 9090
+  visibility: public

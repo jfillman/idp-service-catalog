@@ -1,0 +1,20 @@
+# Composes a TektonCICD child XR directly - identical mechanism to
+# nodejsapplication's own tekton-cicd-child.yaml (straight port, not a redesign -
+# see that file's own header, and xrds/tektoncicd.yaml's own header, for the full
+# reasoning).
+#
+# Unconditional - not locally gated on $clusterOk. TektonCICD's own internal
+# devcluster gate now owns that decision.
+<<- $platformOwner := "jfillman" >>
+apiVersion: catalog.idp.io/v1alpha1
+kind: TektonCICD
+metadata:
+  name: <<$xrName>>-tektoncicd
+  annotations:
+    <<setResourceNameAnnotation "tektoncicd">>
+spec:
+  appName: <<$xrName>>
+  gitopsRepoUrl: <<printf "https://github.com/%s/gitops-%s" $platformOwner $xrName>>
+  appRepoUrl: <<printf "https://github.com/%s/%s" $platformOwner $xrName>>
+  devCluster: <<$devCluster>>
+---

@@ -1,0 +1,210 @@
+# Src repo + Go boilerplate. Rendered by function-go-templating (source: Inline, see
+# ../composition.yaml/../build-composition.sh), using double-angle-bracket
+# delimiters - same convention as nodejsapplication's own src-repo.yaml.
+#
+# repo.github.m.upbound.io (namespaced managed resources), not the Cluster-scoped
+# repo.github.upbound.io family. providerConfigRef.kind: ClusterProviderConfig is
+# required, not defaulted.
+#
+# crossplane.io/external-name on the Repository below - same live-bug fix as
+# nodejsapplication's own src-repo.yaml.
+#
+# managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"] (no "Update")
+# on every RepositoryFile below - same reasoning as nodejsapplication's own scaffold
+# files: real app source a developer is expected to edit immediately after
+# scaffolding.
+#
+# Zero external dependencies in the scaffold itself (net/http stdlib, no framework) -
+# same minimalism NodeJSApplication's own boilerplate keeps.
+#
+# $modulePath: github.com/<platformOwner>/<xrName>, matching the real repo URL - see
+# xrds/goapplication.yaml's own header for why this is a computed literal, not a
+# spec field.
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $description := $spec.description | default (printf "%s - a Go application" $xrName) >>
+<<- $goVersion := $spec.goVersion >>
+<<- $port := $spec.port >>
+<<- $visibility := $spec.visibility >>
+<<- $platformOwner := "jfillman" >>
+<<- $modulePath := printf "github.com/%s/%s" $platformOwner $xrName >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: Repository
+metadata:
+  name: <<$xrName>>-src
+  annotations:
+    <<setResourceNameAnnotation "src-repo">>
+    crossplane.io/external-name: <<$xrName>>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    name: <<$xrName>>
+    description: <<$description | toJson>>
+    visibility: <<$visibility>>
+    autoInit: true
+    hasIssues: true
+    deleteBranchOnMerge: true
+    securityAndAnalysis:
+      - secretScanning:
+          - status: disabled
+        secretScanningPushProtection:
+          - status: disabled
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-go-mod
+  annotations:
+    <<setResourceNameAnnotation "src-repo-go-mod">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: go.mod
+    overwriteOnCreate: true
+    content: |
+      module <<$modulePath>>
+
+      go <<$goVersion>>
+    commitMessage: "GoApplication scaffold: go.mod"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-main-go
+  annotations:
+    <<setResourceNameAnnotation "src-repo-main-go">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: main.go
+    overwriteOnCreate: true
+    content: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      	"log"
+      	"net/http"
+      	"os"
+      )
+
+      func main() {
+      	port := os.Getenv("PORT")
+      	if port == "" {
+      		port = <<printf "%d" $port | toJson>>
+      	}
+
+      	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+      		w.Header().Set("Content-Type", "application/json")
+      		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+      	})
+      	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+      		fmt.Fprintf(w, <<printf "Hello from %s\n" $xrName | toJson>>)
+      	})
+
+      	log.Printf(<<printf "%s listening on port %%s" $xrName | toJson>>, port)
+      	log.Fatal(http.ListenAndServe(":"+port, nil))
+      }
+    commitMessage: "GoApplication scaffold: main.go"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-dockerfile
+  annotations:
+    <<setResourceNameAnnotation "src-repo-dockerfile">>
+  # Multi-stage, matching springbootapplication's own precedent (a real difference
+  # from nodejsapplication's single-stage script, not just a style choice): build
+  # stage carries the full Go toolchain, final stage is bare Alpine running only the
+  # compiled static binary - keeps the shipped image's dependency surface to just
+  # the binary plus Alpine's own base packages. CGO_ENABLED=0 - the resulting binary
+  # has no libc dependency, so it runs unmodified on the runtime stage's musl libc.
+  # `apk upgrade` on the runtime stage picks up already-published Alpine package
+  # patches, same as nodejsapplication's own Dockerfile.
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: Dockerfile
+    overwriteOnCreate: true
+    content: |
+      FROM golang:<<$goVersion>>-alpine AS build
+      WORKDIR /app
+      COPY go.mod ./
+      COPY main.go ./
+      RUN CGO_ENABLED=0 go build -o app .
+
+      FROM alpine:latest
+      WORKDIR /app
+      RUN apk upgrade --no-cache
+      COPY --from=build /app/app .
+      EXPOSE <<$port>>
+      CMD ["./app"]
+    commitMessage: "GoApplication scaffold: Dockerfile"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-gitignore
+  annotations:
+    <<setResourceNameAnnotation "src-repo-gitignore">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: .gitignore
+    overwriteOnCreate: true
+    content: |
+      /app
+      *.log
+      .env
+    commitMessage: "GoApplication scaffold: .gitignore"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-readme
+  annotations:
+    <<setResourceNameAnnotation "src-repo-readme">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: README.md
+    overwriteOnCreate: true
+    content: |
+      # <<$xrName>>
+
+      <<$description>>
+
+      Scaffolded by `GoApplication` (idp-service-catalog). Go <<$goVersion>>.
+
+      ```
+      go run .
+      ```
+
+      **CICD pipeline onboarding**: this app's `GoApplication` resource carries a
+      `CicdOnboarded` condition tracking whether `platform-cicd`'s tenant-onboarding
+      ApplicationSet has picked up this app's committed tenant identity yet. See the
+      resource's own status for details.
+    commitMessage: "GoApplication scaffold: README.md"

@@ -1,0 +1,450 @@
+# GENERATED FILE - do not hand-edit the pipeline's `input.inline.template` blocks
+# below. Edit templates/render-github-resources/*.yaml or
+# templates/cicd-onboarding-status/*.yaml instead, then run ./build-composition.sh to
+# regenerate this file.
+#
+# Two function-go-templating steps, not one (compositions/nodejsapplication's own
+# pattern, ported here): render-github-resources composes the real provider-github
+# managed resources plus a composed TektonCICD child (CI/CD onboarding lives there
+# now, not inline - see xrds/tektoncicd.yaml), cicd-onboarding-status proxies that
+# child's own DevClusterReady/CicdOnboarded conditions onto this XR afterward.
+#
+# Delimiters: << >> instead of Go's default {{ }}, matching every other Composition
+# in this catalog - here it dodges Go source's own braces needing no escaping at all.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: goapplications.catalog.idp.io
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.idp.io/v1alpha1
+    kind: GoApplication
+  mode: Pipeline
+  pipeline:
+    - step: render-github-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            # Real Crossplane extra-resources lookup against the cluster registry
+            # (gitops-cluster-dev/00-bootstrap/cluster-registry/, service-catalog-design.md §0) -
+            # identical mechanism to nodejsapplication's own 00-devcluster-gate.yaml (straight
+            # port, not a redesign). Still needed here even though CI/CD onboarding itself now
+            # lives in TektonCICD - secretstore-xr.yaml (this same pipeline step) needs its own
+            # $clusterOk/$tenantsRepo.
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $devCluster := $spec.devCluster >>
+            <<- $allExtra := .extraResources | default dict >>
+            <<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+            <<- $items := index $entry "items" | default list >>
+            <<- $clusterOk := false >>
+            <<- $clusterType := "" >>
+            <<- $cicdReady := "" >>
+            <<- $tenantsRepo := "" >>
+            <<- if gt (len $items) 0 >>
+              <<- $cm := (index $items 0).resource >>
+              <<- $clusterType = $cm.data.type >>
+              <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+              <<- $tenantsRepo = index $cm.data "tenantsRepo" | default "" >>
+              <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+                <<- $clusterOk = true >>
+              <<- end >>
+            <<- end >>
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ExtraResources
+            requirements:
+              devcluster-registry-entry:
+                apiVersion: v1
+                kind: ConfigMap
+                namespace: crossplane-system
+                matchName: <<$devCluster>>
+            ---
+            # Empty, scaffolded gitops-<app-name> repo - identical mechanism to
+            # nodejsapplication's own gitops-repo.yaml (straight port, not a redesign).
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $visibility := $spec.visibility >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: Repository
+            metadata:
+              name: <<$xrName>>-gitops
+              annotations:
+                <<setResourceNameAnnotation "gitops-repo">>
+                crossplane.io/external-name: <<printf "gitops-%s" $xrName>>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                name: <<printf "gitops-%s" $xrName>>
+                description: <<printf "GitOps deployment repo for %s - <cluster>/<env>/values.yaml per environment" $xrName | toJson>>
+                visibility: <<$visibility>>
+                autoInit: true
+                securityAndAnalysis:
+                  - secretScanning:
+                      - status: disabled
+                    secretScanningPushProtection:
+                      - status: disabled
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-gitops-readme
+              annotations:
+                <<setResourceNameAnnotation "gitops-repo-readme">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<printf "gitops-%s" $xrName>>
+                file: README.md
+                overwriteOnCreate: true
+                content: |
+                  # gitops-<<$xrName>>
+
+                  GitOps deployment repo for `<<$xrName>>`, scaffolded by `GoApplication`
+                  (idp-service-catalog). Empty until this app's first `ApplicationEnvironment`
+                  resource is created - each environment gets its own `<cluster>/<env>/values.yaml`
+                  here, rendered by `idp-application` (idp-service-catalog's shared Helm chart).
+                commitMessage: "GoApplication scaffold: README.md"
+            ---
+            # Commits a "shared"-mode SecretStore XR manifest into
+            # tenants/<app-name>/xr-requests/secretstore.yaml - identical mechanism to
+            # nodejsapplication's own secretstore-xr.yaml (straight port, not a redesign).
+            <<- if $clusterOk >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-secretstore-xr
+              annotations:
+                <<setResourceNameAnnotation "secretstore-xr">>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$tenantsRepo>>
+                file: <<printf "tenants/%s/xr-requests/secretstore.yaml" $xrName>>
+                overwriteOnCreate: true
+                content: |
+                  apiVersion: catalog.idp.io/v1alpha1
+                  kind: SecretStore
+                  metadata:
+                    name: <<printf "%s-%s" $xrName $devCluster>>
+                  spec:
+                    appRef:
+                      name: <<$xrName>>
+                    cluster: <<$devCluster>>
+                commitMessage: <<printf "Onboard %s: add tenants/%s/xr-requests/secretstore.yaml" $xrName $xrName | toJson>>
+            <<- end >>
+            ---
+            # Src repo + Go boilerplate. Rendered by function-go-templating (source: Inline, see
+            # ../composition.yaml/../build-composition.sh), using double-angle-bracket
+            # delimiters - same convention as nodejsapplication's own src-repo.yaml.
+            #
+            # repo.github.m.upbound.io (namespaced managed resources), not the Cluster-scoped
+            # repo.github.upbound.io family. providerConfigRef.kind: ClusterProviderConfig is
+            # required, not defaulted.
+            #
+            # crossplane.io/external-name on the Repository below - same live-bug fix as
+            # nodejsapplication's own src-repo.yaml.
+            #
+            # managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"] (no "Update")
+            # on every RepositoryFile below - same reasoning as nodejsapplication's own scaffold
+            # files: real app source a developer is expected to edit immediately after
+            # scaffolding.
+            #
+            # Zero external dependencies in the scaffold itself (net/http stdlib, no framework) -
+            # same minimalism NodeJSApplication's own boilerplate keeps.
+            #
+            # $modulePath: github.com/<platformOwner>/<xrName>, matching the real repo URL - see
+            # xrds/goapplication.yaml's own header for why this is a computed literal, not a
+            # spec field.
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $description := $spec.description | default (printf "%s - a Go application" $xrName) >>
+            <<- $goVersion := $spec.goVersion >>
+            <<- $port := $spec.port >>
+            <<- $visibility := $spec.visibility >>
+            <<- $platformOwner := "jfillman" >>
+            <<- $modulePath := printf "github.com/%s/%s" $platformOwner $xrName >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: Repository
+            metadata:
+              name: <<$xrName>>-src
+              annotations:
+                <<setResourceNameAnnotation "src-repo">>
+                crossplane.io/external-name: <<$xrName>>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                name: <<$xrName>>
+                description: <<$description | toJson>>
+                visibility: <<$visibility>>
+                autoInit: true
+                hasIssues: true
+                deleteBranchOnMerge: true
+                securityAndAnalysis:
+                  - secretScanning:
+                      - status: disabled
+                    secretScanningPushProtection:
+                      - status: disabled
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-go-mod
+              annotations:
+                <<setResourceNameAnnotation "src-repo-go-mod">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: go.mod
+                overwriteOnCreate: true
+                content: |
+                  module <<$modulePath>>
+
+                  go <<$goVersion>>
+                commitMessage: "GoApplication scaffold: go.mod"
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-main-go
+              annotations:
+                <<setResourceNameAnnotation "src-repo-main-go">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: main.go
+                overwriteOnCreate: true
+                content: |
+                  package main
+
+                  import (
+                  	"encoding/json"
+                  	"fmt"
+                  	"log"
+                  	"net/http"
+                  	"os"
+                  )
+
+                  func main() {
+                  	port := os.Getenv("PORT")
+                  	if port == "" {
+                  		port = <<printf "%d" $port | toJson>>
+                  	}
+
+                  	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+                  		w.Header().Set("Content-Type", "application/json")
+                  		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+                  	})
+                  	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+                  		fmt.Fprintf(w, <<printf "Hello from %s\n" $xrName | toJson>>)
+                  	})
+
+                  	log.Printf(<<printf "%s listening on port %%s" $xrName | toJson>>, port)
+                  	log.Fatal(http.ListenAndServe(":"+port, nil))
+                  }
+                commitMessage: "GoApplication scaffold: main.go"
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-dockerfile
+              annotations:
+                <<setResourceNameAnnotation "src-repo-dockerfile">>
+              # Multi-stage, matching springbootapplication's own precedent (a real difference
+              # from nodejsapplication's single-stage script, not just a style choice): build
+              # stage carries the full Go toolchain, final stage is bare Alpine running only the
+              # compiled static binary - keeps the shipped image's dependency surface to just
+              # the binary plus Alpine's own base packages. CGO_ENABLED=0 - the resulting binary
+              # has no libc dependency, so it runs unmodified on the runtime stage's musl libc.
+              # `apk upgrade` on the runtime stage picks up already-published Alpine package
+              # patches, same as nodejsapplication's own Dockerfile.
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: Dockerfile
+                overwriteOnCreate: true
+                content: |
+                  FROM golang:<<$goVersion>>-alpine AS build
+                  WORKDIR /app
+                  COPY go.mod ./
+                  COPY main.go ./
+                  RUN CGO_ENABLED=0 go build -o app .
+
+                  FROM alpine:latest
+                  WORKDIR /app
+                  RUN apk upgrade --no-cache
+                  COPY --from=build /app/app .
+                  EXPOSE <<$port>>
+                  CMD ["./app"]
+                commitMessage: "GoApplication scaffold: Dockerfile"
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-gitignore
+              annotations:
+                <<setResourceNameAnnotation "src-repo-gitignore">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: .gitignore
+                overwriteOnCreate: true
+                content: |
+                  /app
+                  *.log
+                  .env
+                commitMessage: "GoApplication scaffold: .gitignore"
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-readme
+              annotations:
+                <<setResourceNameAnnotation "src-repo-readme">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: README.md
+                overwriteOnCreate: true
+                content: |
+                  # <<$xrName>>
+
+                  <<$description>>
+
+                  Scaffolded by `GoApplication` (idp-service-catalog). Go <<$goVersion>>.
+
+                  ```
+                  go run .
+                  ```
+
+                  **CICD pipeline onboarding**: this app's `GoApplication` resource carries a
+                  `CicdOnboarded` condition tracking whether `platform-cicd`'s tenant-onboarding
+                  ApplicationSet has picked up this app's committed tenant identity yet. See the
+                  resource's own status for details.
+                commitMessage: "GoApplication scaffold: README.md"
+            ---
+            # Composes a TektonCICD child XR directly - identical mechanism to
+            # nodejsapplication's own tekton-cicd-child.yaml (straight port, not a redesign -
+            # see that file's own header, and xrds/tektoncicd.yaml's own header, for the full
+            # reasoning).
+            #
+            # Unconditional - not locally gated on $clusterOk. TektonCICD's own internal
+            # devcluster gate now owns that decision.
+            <<- $platformOwner := "jfillman" >>
+            apiVersion: catalog.idp.io/v1alpha1
+            kind: TektonCICD
+            metadata:
+              name: <<$xrName>>-tektoncicd
+              annotations:
+                <<setResourceNameAnnotation "tektoncicd">>
+            spec:
+              appName: <<$xrName>>
+              gitopsRepoUrl: <<printf "https://github.com/%s/gitops-%s" $platformOwner $xrName>>
+              appRepoUrl: <<printf "https://github.com/%s/%s" $platformOwner $xrName>>
+              devCluster: <<$devCluster>>
+            ---
+            ---
+        delims:
+          left: "<<"
+          right: ">>"
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready
+    - step: cicd-onboarding-status
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            # Proxies DevClusterReady/CicdOnboarded straight from the composed TektonCICD
+            # child's own status.conditions onto this XR's status. Identical mechanism to
+            # nodejsapplication's own cicd-onboarding-status/status.yaml (straight port, not a
+            # redesign) - see that file's own header for the full "why".
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $allObserved := .observed.resources | default dict >>
+            <<- $childRes := index $allObserved "tektoncicd" | default dict >>
+            <<- $childXR := index $childRes "resource" | default dict >>
+            <<- $childStatus := index $childXR "status" | default dict >>
+            <<- $childConditions := index $childStatus "conditions" | default list >>
+            <<- $devClusterCondition := dict >>
+            <<- $cicdOnboardedCondition := dict >>
+            <<- range $childConditions >>
+              <<- if eq .type "DevClusterReady" >>
+                <<- $devClusterCondition = . >>
+              <<- else if eq .type "CicdOnboarded" >>
+                <<- $cicdOnboardedCondition = . >>
+              <<- end >>
+            <<- end >>
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ClaimConditions
+            conditions:
+            <<- if $devClusterCondition >>
+              - type: DevClusterReady
+                status: <<$devClusterCondition.status | toJson>>
+                reason: <<$devClusterCondition.reason>>
+                message: <<$devClusterCondition.message | toJson>>
+                target: CompositeAndClaim
+            <<- else >>
+              - type: DevClusterReady
+                status: "False"
+                reason: DevClusterNotReady
+                message: >-
+                  Waiting on the composed TektonCICD child (<<$xrName>>-tektoncicd) to report
+                  its own DevClusterReady condition - resolves itself once it does.
+                target: CompositeAndClaim
+            <<- end >>
+            <<- if $cicdOnboardedCondition >>
+              - type: CicdOnboarded
+                status: <<$cicdOnboardedCondition.status | toJson>>
+                reason: <<$cicdOnboardedCondition.reason>>
+                message: <<$cicdOnboardedCondition.message | toJson>>
+                target: CompositeAndClaim
+            <<- else >>
+              - type: CicdOnboarded
+                status: "False"
+                reason: CicdOnboardingPending
+                message: >-
+                  Waiting on the composed TektonCICD child (<<$xrName>>-tektoncicd) to report
+                  its own CicdOnboarded condition - resolves itself once it does.
+                target: CompositeAndClaim
+            <<- end >>
+            ---
+        delims:
+          left: "<<"
+          right: ">>"

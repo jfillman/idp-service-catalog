@@ -1,0 +1,15 @@
+# --required-resources fixture: simulates the real cluster-registry ConfigMap
+# (gitops-cluster-dev/00-bootstrap/cluster-registry/kind-dev.yaml) once kind-dev is
+# a real, registered, cicdReady dev cluster. Paired with xr-widget-service.yaml for
+# the gate-pass render - see ../README.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kind-dev
+  namespace: crossplane-system
+  labels:
+    platform.io/cluster-registry: "true"
+data:
+  type: dev
+  cicdReady: "true"
+  tenantsRepo: gitops-cluster-dev-tenants

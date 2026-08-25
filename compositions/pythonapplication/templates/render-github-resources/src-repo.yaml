@@ -1,0 +1,240 @@
+# Src repo + Python boilerplate. Rendered by function-go-templating (source: Inline,
+# see ../composition.yaml/../build-composition.sh), using double-angle-bracket
+# delimiters - same convention as nodejsapplication's own src-repo.yaml.
+#
+# repo.github.m.upbound.io (namespaced managed resources), not the Cluster-scoped
+# repo.github.upbound.io family. providerConfigRef.kind: ClusterProviderConfig is
+# required, not defaulted.
+#
+# crossplane.io/external-name on the Repository below - same live-bug fix as
+# nodejsapplication's own src-repo.yaml (a cluster rebuild's fresh Repository MR has
+# no external-name, so provider-github tries to Create a repo that already exists on
+# GitHub and 422s; setting external-name up front makes the MR import/adopt the
+# existing repo instead).
+#
+# managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"] (no "Update")
+# on every RepositoryFile below - same reasoning as nodejsapplication's own scaffold
+# files: this is real app source a developer is expected to edit immediately after
+# scaffolding, and the provider's default "*" policy would drift-correct any such
+# edit back to this static template on its next reconcile (a real bug hit live for
+# checkout-api's package.json - never repeat it here).
+#
+# Zero external dependencies in the scaffold itself (stdlib http.server, no
+# framework) - same minimalism NodeJSApplication's own boilerplate keeps (raw
+# `http` module, no express) rather than picking a Python web framework on every
+# app's behalf.
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $description := $spec.description | default (printf "%s - a Python application" $xrName) >>
+<<- $pythonVersion := $spec.pythonVersion >>
+<<- $packageManager := $spec.packageManager >>
+<<- $port := $spec.port >>
+<<- $visibility := $spec.visibility >>
+<<- $installCmd := "pip install --no-cache-dir -r requirements.txt" >>
+<<- if eq $packageManager "poetry" >>
+  <<- $installCmd = "pip install --no-cache-dir poetry && poetry install --no-root --no-interaction" >>
+<<- else if eq $packageManager "uv" >>
+  <<- $installCmd = "pip install --no-cache-dir uv && uv sync --frozen --no-dev" >>
+<<- end >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: Repository
+metadata:
+  name: <<$xrName>>-src
+  annotations:
+    <<setResourceNameAnnotation "src-repo">>
+    crossplane.io/external-name: <<$xrName>>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    name: <<$xrName>>
+    description: <<$description | toJson>>
+    visibility: <<$visibility>>
+    autoInit: true
+    hasIssues: true
+    deleteBranchOnMerge: true
+    securityAndAnalysis:
+      - secretScanning:
+          - status: disabled
+        secretScanningPushProtection:
+          - status: disabled
+---
+<<- if eq $packageManager "pip" >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-requirements-txt
+  annotations:
+    <<setResourceNameAnnotation "src-repo-dependency-file">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: requirements.txt
+    overwriteOnCreate: true
+    content: |
+      # No dependencies yet - main.py is stdlib-only.
+    commitMessage: "PythonApplication scaffold: requirements.txt"
+<<- else >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-pyproject-toml
+  annotations:
+    <<setResourceNameAnnotation "src-repo-dependency-file">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: pyproject.toml
+    overwriteOnCreate: true
+    content: |
+      [project]
+      name = <<$xrName | toJson>>
+      version = "0.1.0"
+      description = <<$description | toJson>>
+      requires-python = <<printf ">=%s" $pythonVersion | toJson>>
+      dependencies = []
+    commitMessage: "PythonApplication scaffold: pyproject.toml"
+<<- end >>
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-main-py
+  annotations:
+    <<setResourceNameAnnotation "src-repo-main-py">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: main.py
+    overwriteOnCreate: true
+    content: |
+      import json
+      import os
+      from http.server import BaseHTTPRequestHandler, HTTPServer
+
+      PORT = int(os.environ.get("PORT", <<$port>>))
+
+
+      class Handler(BaseHTTPRequestHandler):
+          def do_GET(self):
+              if self.path == "/healthz":
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.end_headers()
+                  self.wfile.write(json.dumps({"status": "ok"}).encode())
+                  return
+              self.send_response(200)
+              self.send_header("Content-Type", "text/plain")
+              self.end_headers()
+              self.wfile.write(<<printf "Hello from %s\n" $xrName | toJson>>.encode())
+
+
+      if __name__ == "__main__":
+          server = HTTPServer(("0.0.0.0", PORT), Handler)
+          print(<<printf "%s listening on port {}" $xrName | toJson>>.format(PORT))
+          server.serve_forever()
+    commitMessage: "PythonApplication scaffold: main.py"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-dockerfile
+  annotations:
+    <<setResourceNameAnnotation "src-repo-dockerfile">>
+  # `apt-get upgrade` picks up already-published Debian package patches, same
+  # patch-freshness reasoning as nodejsapplication's/springbootapplication's own
+  # Dockerfiles. python:<version>-slim, not -alpine - avoids musl/manylinux wheel
+  # compatibility issues alpine's libc would otherwise risk for any future
+  # dependency this app adds.
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: Dockerfile
+    overwriteOnCreate: true
+    content: |
+      FROM python:<<$pythonVersion>>-slim
+      WORKDIR /app
+      RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+      <<- if eq $packageManager "pip" >>
+      COPY requirements.txt ./
+      <<- else >>
+      COPY pyproject.toml ./
+      <<- end >>
+      RUN <<$installCmd>>
+      COPY . .
+      EXPOSE <<$port>>
+      CMD ["python", "main.py"]
+    commitMessage: "PythonApplication scaffold: Dockerfile"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-gitignore
+  annotations:
+    <<setResourceNameAnnotation "src-repo-gitignore">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: .gitignore
+    overwriteOnCreate: true
+    content: |
+      __pycache__/
+      *.pyc
+      .venv/
+      .env
+    commitMessage: "PythonApplication scaffold: .gitignore"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-readme
+  annotations:
+    <<setResourceNameAnnotation "src-repo-readme">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: README.md
+    overwriteOnCreate: true
+    content: |
+      # <<$xrName>>
+
+      <<$description>>
+
+      Scaffolded by `PythonApplication` (idp-service-catalog). Python <<$pythonVersion>>,
+      <<$packageManager>>.
+
+      ```
+      <<$installCmd>>
+      python main.py
+      ```
+
+      **CICD pipeline onboarding**: this app's `PythonApplication` resource carries a
+      `CicdOnboarded` condition tracking whether `platform-cicd`'s tenant-onboarding
+      ApplicationSet has picked up this app's committed tenant identity yet. See the
+      resource's own status for details.
+    commitMessage: "PythonApplication scaffold: README.md"

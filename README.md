@@ -9,9 +9,30 @@ this repo is where it's actually built.
 
 ## Status
 
+**`PythonApplication` + `GoApplication` XRDs — third and fourth Bootstrap-tier
+stacks, offline-verified, live rollout pending.** `xrds/pythonapplication.yaml` +
+`compositions/pythonapplication/` and `xrds/goapplication.yaml` +
+`compositions/goapplication/` — structural ports of `NodeJSApplication`, built after
+the `TektonCICD` extraction so both are simpler than `SpringBootApplication` was:
+CI/CD onboarding is composed via a `TektonCICD` child, not carried inline.
+`PythonApplication` adds `spec.pythonVersion`/`spec.packageManager` (pip/poetry/uv,
+branching the dependency-file shape and Dockerfile install step); `GoApplication`
+adds only `spec.goVersion` (no package-manager equivalent - Go has one real
+toolchain) and derives its module path from the real repo URL rather than taking it
+as input. Both boilerplates keep the same zero-external-dependency philosophy
+`NodeJSApplication`'s own scaffold uses (stdlib `http`/`http.server`/`net/http`, no
+framework); `GoApplication`'s Dockerfile is genuinely multi-stage, matching
+`SpringBootApplication`'s own precedent. The generated `main.py`/`main.go`/`go.mod`
+were validated against the real Python/Go toolchains (`py_compile`, `go build`), not
+just rendered - this also caught and fixed a pre-existing double-escaping bug
+(`\\n` instead of `\n` in the Go-template `printf` argument piped through `toJson`)
+before it could be copied into two more templates; `NodeJSApplication`'s own
+`index.js` carries the same latent bug today, cosmetic-only (affects only the `/`
+route's trailing newline, not health checks or CI/CD status), not yet fixed there.
+
 **`TektonCICD` XRD + Composition — CI/CD onboarding extracted out of
-`NodeJSApplication`/`SpringBootApplication` into its own XRD, offline-verified,
-live rollout pending.** `xrds/tektoncicd.yaml` + `compositions/tektoncicd/` replace the
+`NodeJSApplication`/`SpringBootApplication` into its own XRD, live-verified on
+`checkout-api`/`nodejs-demo-app`/`order-api` 2026-08-25.** `xrds/tektoncicd.yaml` + `compositions/tektoncicd/` replace the
 ~150 lines of near-verbatim-duplicated devCluster-gate/`identity.yaml`-commit/status
 logic each of the two app XRDs carried (flagged while discussing which stack to add
 next — a third stack would have copied it a third time). Named for the actual backend
