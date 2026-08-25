@@ -171,6 +171,13 @@ spec:
               annotations:
                 <<setResourceNameAnnotation "cicd-identity-yaml">>
             spec:
+              # managementPolicies excluding "Delete" (matches applicationenvironment's own
+              # cluster-identity-yaml.yaml precedent) - landed ahead of the TektonCICD extraction so
+              # that removing this composition-resource-name from the pipeline orphans only the k8s
+              # RepositoryFile CR, not the real tenants/<app>/identity.yaml file on GitHub. Without
+              # this, the extraction would issue a real DELETE against the GitHub API for every
+              # already-onboarded app the moment it landed.
+              managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
               providerConfigRef:
                 kind: ClusterProviderConfig
                 name: default
