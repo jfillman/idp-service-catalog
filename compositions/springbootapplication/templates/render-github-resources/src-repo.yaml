@@ -1,0 +1,364 @@
+# Src repo + Java/Spring Boot boilerplate. Rendered by function-go-templating (source:
+# Inline, see ../composition.yaml/../build-composition.sh), using double-angle-bracket
+# delimiters - same convention as nodejsapplication's own src-repo.yaml, for the same
+# reason (Go's default curly-brace delimiter would collide with literal template syntax
+# elsewhere; here it dodges Java's own braces needing no escaping at all, kept
+# consistent anyway).
+#
+# NOTE: never write two literal angle-bracket delimiter characters adjacent to each
+# other anywhere in this file outside a real action, including in comments - the lexer
+# scans raw text for the delimiter pair regardless of YAML comment syntax, and an
+# accidental empty action fails the whole render (hit live building nodejsapplication's
+# own copy of this file).
+#
+# repo.github.m.upbound.io (namespaced managed resources), not the Cluster-scoped
+# repo.github.upbound.io family - see provider-github-config.yaml's own header for why.
+# providerConfigRef.kind: ClusterProviderConfig is required, not defaulted.
+#
+# Repository's own forProvider has no owner field - every repo this ProviderConfig's
+# credential can create lands under whichever owner that credential is scoped to.
+# autoInit: true - RepositoryFile requires the target branch to already exist, which an
+# empty repo doesn't have.
+#
+# crossplane.io/external-name on the Repository below - same live-bug fix as
+# nodejsapplication's own src-repo.yaml (a cluster rebuild's fresh Repository MR has no
+# external-name, so provider-github tries to Create a repo that already exists on GitHub
+# and 422s; setting external-name up front makes the MR import/adopt the existing repo
+# instead).
+#
+# managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"] (no "Update") on
+# every RepositoryFile below - same reasoning as nodejsapplication's own scaffold files:
+# these are real app source a developer is expected to edit immediately after
+# scaffolding, and the provider's default "*" policy would drift-correct any such edit
+# back to this static template on its next reconcile (a real bug hit live for
+# checkout-api's package.json - never repeat it here). Create-once-then-hands-off is
+# what "scaffold" is supposed to mean.
+#
+# One flat Java package (spec.groupId itself, not groupId+artifactId nested) - see
+# xrds/springbootapplication.yaml's own header for why: $xrName is kebab-case metadata.name
+# and isn't a legal Java package-name segment, so the single scaffolded class lives
+# directly in the groupId package rather than attempting a kebab-to-camelCase
+# derivation. $packagePath is groupId with dots replaced by slashes, for the file's
+# RepositoryFile path.
+#
+# springBootVersion is a template literal, not a spec field - see the XRD's own header
+# for why (the platform, not each app, picks and centrally upgrades the framework
+# version).
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $description := $spec.description | default (printf "%s - a Spring Boot application" $xrName) >>
+<<- $javaVersion := $spec.javaVersion >>
+<<- $buildTool := $spec.buildTool >>
+<<- $groupId := $spec.groupId >>
+<<- $packagePath := $groupId | replace "." "/" >>
+<<- $port := $spec.port >>
+<<- $visibility := $spec.visibility >>
+<<- $springBootVersion := "3.3.4" >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: Repository
+metadata:
+  name: <<$xrName>>-src
+  annotations:
+    <<setResourceNameAnnotation "src-repo">>
+    crossplane.io/external-name: <<$xrName>>
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    name: <<$xrName>>
+    description: <<$description | toJson>>
+    visibility: <<$visibility>>
+    autoInit: true
+    hasIssues: true
+    deleteBranchOnMerge: true
+    # Explicit, not omitted - see nodejsapplication's own src-repo.yaml header for the
+    # real live 422 this avoids (terraform-provider-github late-inits "enabled", GitHub
+    # rejects PATCHing it back on this account's private repos with no GHAS
+    # entitlement).
+    securityAndAnalysis:
+      - secretScanning:
+          - status: disabled
+        secretScanningPushProtection:
+          - status: disabled
+---
+<<- if eq $buildTool "gradle" >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-build-gradle
+  annotations:
+    <<setResourceNameAnnotation "src-repo-build-file">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: build.gradle
+    overwriteOnCreate: true
+    content: |
+      plugins {
+          id 'org.springframework.boot' version '<<$springBootVersion>>'
+          id 'io.spring.dependency-management' version '1.1.6'
+          id 'java'
+      }
+
+      group = '<<$groupId>>'
+      version = '0.1.0'
+
+      java {
+          toolchain {
+              languageVersion = JavaLanguageVersion.of(<<$javaVersion>>)
+          }
+      }
+
+      repositories {
+          mavenCentral()
+      }
+
+      dependencies {
+          implementation 'org.springframework.boot:spring-boot-starter-web'
+          implementation 'org.springframework.boot:spring-boot-starter-actuator'
+      }
+    commitMessage: "SpringBootApplication scaffold: build.gradle"
+<<- else >>
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-pom-xml
+  annotations:
+    <<setResourceNameAnnotation "src-repo-build-file">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: pom.xml
+    overwriteOnCreate: true
+    content: |
+      <?xml version="1.0" encoding="UTF-8"?>
+      <project xmlns="http://maven.apache.org/POM/4.0.0"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+        <modelVersion>4.0.0</modelVersion>
+
+        <parent>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-starter-parent</artifactId>
+          <version><<$springBootVersion>></version>
+          <relativePath/>
+        </parent>
+
+        <groupId><<$groupId>></groupId>
+        <artifactId><<$xrName>></artifactId>
+        <version>0.1.0</version>
+        <packaging>jar</packaging>
+
+        <properties>
+          <java.version><<$javaVersion>></java.version>
+        </properties>
+
+        <dependencies>
+          <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+          </dependency>
+          <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+          </dependency>
+        </dependencies>
+
+        <build>
+          <plugins>
+            <plugin>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+          </plugins>
+        </build>
+      </project>
+    commitMessage: "SpringBootApplication scaffold: pom.xml"
+<<- end >>
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-application-java
+  annotations:
+    <<setResourceNameAnnotation "src-repo-application-java">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: <<printf "src/main/java/%s/Application.java" $packagePath>>
+    overwriteOnCreate: true
+    content: |
+      package <<$groupId>>;
+
+      import org.springframework.boot.SpringApplication;
+      import org.springframework.boot.autoconfigure.SpringBootApplication;
+      import org.springframework.web.bind.annotation.GetMapping;
+      import org.springframework.web.bind.annotation.RestController;
+
+      @SpringBootApplication
+      @RestController
+      public class Application {
+
+          public static void main(String[] args) {
+              SpringApplication.run(Application.class, args);
+          }
+
+          @GetMapping("/")
+          public String home() {
+              return <<printf "Hello from %s" $xrName | toJson>>;
+          }
+      }
+    commitMessage: "SpringBootApplication scaffold: Application.java"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-application-properties
+  annotations:
+    <<setResourceNameAnnotation "src-repo-application-properties">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: src/main/resources/application.properties
+    overwriteOnCreate: true
+    content: |
+      spring.application.name=<<$xrName>>
+      server.port=${PORT:<<$port>>}
+      management.endpoints.web.exposure.include=health,info
+    commitMessage: "SpringBootApplication scaffold: application.properties"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-dockerfile
+  annotations:
+    <<setResourceNameAnnotation "src-repo-dockerfile">>
+  # Multi-stage: build stage carries a full JDK plus the build tool (installed via apk,
+  # no bundled wrapper script - deliberately narrower than Maven/Gradle wrapper scaffolding,
+  # matching this catalog's "deliberately narrow" scope elsewhere), final stage is a bare
+  # JRE running only the packaged jar - keeps the shipped image's dependency surface (and
+  # CVE exposure - see nodejsapplication's own Dockerfile header for the real live
+  # precedent this follows) to the JRE plus the app's own runtime deps, not a JDK/build
+  # toolchain nobody needs at runtime. `apk upgrade` on the runtime stage picks up
+  # already-published Alpine package patches, same as nodejsapplication's own Dockerfile.
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: Dockerfile
+    overwriteOnCreate: true
+    content: |
+      FROM eclipse-temurin:<<$javaVersion>>-jdk-alpine AS build
+      WORKDIR /app
+      <<- if eq $buildTool "gradle">>
+      RUN apk add --no-cache gradle
+      COPY build.gradle ./
+      COPY src ./src
+      RUN gradle build -x test --no-daemon
+      <<- else>>
+      RUN apk add --no-cache maven
+      COPY pom.xml ./
+      COPY src ./src
+      RUN mvn -q -DskipTests package
+      <<- end>>
+
+      FROM eclipse-temurin:<<$javaVersion>>-jre-alpine
+      WORKDIR /app
+      RUN apk upgrade --no-cache
+      <<- if eq $buildTool "gradle">>
+      COPY --from=build /app/build/libs/*.jar app.jar
+      <<- else>>
+      COPY --from=build /app/target/*.jar app.jar
+      <<- end>>
+      EXPOSE <<$port>>
+      CMD ["java", "-jar", "app.jar"]
+    commitMessage: "SpringBootApplication scaffold: Dockerfile"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-gitignore
+  annotations:
+    <<setResourceNameAnnotation "src-repo-gitignore">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: .gitignore
+    overwriteOnCreate: true
+    content: |
+      <<- if eq $buildTool "gradle">>
+      .gradle/
+      build/
+      <<- else>>
+      target/
+      <<- end>>
+      *.log
+      .env
+    commitMessage: "SpringBootApplication scaffold: .gitignore"
+---
+apiVersion: repo.github.m.upbound.io/v1alpha1
+kind: RepositoryFile
+metadata:
+  name: <<$xrName>>-src-readme
+  annotations:
+    <<setResourceNameAnnotation "src-repo-readme">>
+spec:
+  managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    repository: <<$xrName>>
+    file: README.md
+    overwriteOnCreate: true
+    content: |
+      # <<$xrName>>
+
+      <<$description>>
+
+      Scaffolded by `SpringBootApplication` (idp-service-catalog). Java <<$javaVersion>>,
+      <<$buildTool>>.
+
+      <<- if eq $buildTool "gradle">>
+
+      ```
+      gradle bootRun
+      ```
+      <<- else>>
+
+      ```
+      mvn spring-boot:run
+      ```
+      <<- end>>
+
+      Health check: `GET /actuator/health` (Spring Boot Actuator, enabled by default).
+
+      **CICD pipeline onboarding**: this app's `SpringBootApplication` resource carries a
+      `CicdOnboarded` condition tracking whether `platform-cicd`'s tenant-onboarding
+      ApplicationSet has picked up this app's committed tenant identity yet. See the
+      resource's own status for details.
+    commitMessage: "SpringBootApplication scaffold: README.md"

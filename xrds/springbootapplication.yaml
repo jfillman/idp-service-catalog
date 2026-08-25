@@ -1,0 +1,128 @@
+# Second Bootstrap-tier XRD in the catalog - idp/docs/service-catalog-design.md Item 1/2
+# and the Framework tier table. Structurally a straight port of `NodeJSApplication`
+# (xrds/nodejsapplication.yaml) onto the Java/Spring Boot stack - same scope, same
+# devCluster-gated onboarding mechanism, same six-file identity.yaml, same
+# CicdOnboarded-not-Ready status convention. See that XRD's own header for the mechanism
+# detail this one deliberately doesn't re-explain; only the Java/Spring-specific
+# deviations get their own comments here.
+#
+# apiextensions.crossplane.io/v2 (not v1) for real namespaced-XR support, same as
+# nodejsapplications.catalog.idp.io and slos.catalog.idp.io.
+#
+# XR's own metadata.name IS the app name (no separate spec.appName) - same convention as
+# NodeJSApplication, doubles as this app's Maven artifactId / Gradle project name below.
+#
+# Scope, deliberately narrow, matching NodeJSApplication exactly: src repo + boilerplate
+# + an empty, scaffolded gitops-<app-name> repo + a tenants/<app-name>/identity.yaml
+# commit into that devCluster's tenants repo, onboarding this app's real CICD pipeline
+# via platform-cicd's own tenant-onboarding ApplicationSet. Not upper-env provisioning
+# (ApplicationEnvironment, a separate XRD).
+#
+# spec.devCluster: required, not defaulted - identical field/gate to NodeJSApplication's
+# own (see that XRD's header and this Composition's templates/render-github-resources/
+# 00-devcluster-gate.yaml for the live cluster-registry lookup this validates against).
+#
+# spec.groupId (Java/Spring-specific, no NodeJSApplication equivalent): the Maven
+# groupId / Gradle group and this app's single Java package - deliberately one flat
+# package, not groupId+artifactId nested (e.g. io.idp.apps, not
+# io.idp.apps.<app-name>) because $xrName is this app's own kebab-case metadata.name
+# (matches package.json's own "name" convention) and isn't a valid Java identifier
+# segment - hyphens aren't legal in a Java package name. Keeping the scaffold's single
+# class in the groupId package directly sidesteps a kebab-to-camelCase derivation
+# entirely rather than attempting one. Pattern enforces a real (lowercase, dotted) Java
+# package name so a typo fails XR admission instead of producing an uncompilable
+# package statement.
+#
+# spec.javaVersion / spec.buildTool: Node's nodeVersion/packageManager pair, renamed for
+# the stack. javaVersion enum is this platform's currently-supported LTS lines
+# (temurin's own eclipse-temurin:<version>-jdk-alpine / -jre-alpine tags exist for both).
+# buildTool picks Maven vs Gradle boilerplate/Dockerfile - the Composition branches on it
+# the same way NodeJSApplication branches on packageManager.
+#
+# No spec.springBootVersion: deliberately not a spec field, matching the reasoning
+# NodeJSApplication's own header gives for omitting spec.githubOwner - the platform, not
+# each app, picks and centrally upgrades the framework version (see this Composition's
+# render-github-resources/src-repo.yaml for the literal).
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: springbootapplications.catalog.idp.io
+spec:
+  group: catalog.idp.io
+  names:
+    kind: SpringBootApplication
+    plural: springbootapplications
+    singular: springbootapplication
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                devCluster:
+                  type: string
+                  description: >-
+                    Which dev cluster this app is onboarded onto - e.g. "kind-dev".
+                    An app is pinned to exactly one. Checked live against the
+                    cluster registry (gitops-cluster-dev/00-bootstrap/
+                    cluster-registry/) via a Crossplane extra-resources lookup:
+                    must resolve to a ConfigMap with type: dev and
+                    cicdReady: "true", or the Composition creates nothing and
+                    reports DevClusterReady: False rather than partially
+                    succeeding - see this XRD's own header comment.
+                  minLength: 1
+                description:
+                  type: string
+                  description: >-
+                    Free-text description - used as the src repo's GitHub description
+                    and in the generated boilerplate README. Optional; omitted sections
+                    render a generic placeholder instead.
+                  minLength: 1
+                javaVersion:
+                  type: string
+                  description: >-
+                    Java LTS major version - drives the Dockerfile's eclipse-temurin
+                    base image tags and the build file's toolchain/release version. One
+                    of this platform's currently-supported LTS lines, not a free-form
+                    string, so a typo fails XR admission instead of producing a
+                    Dockerfile that pulls a nonexistent image tag.
+                  enum: ["17", "21"]
+                  default: "21"
+                buildTool:
+                  type: string
+                  description: >-
+                    Which build tool's boilerplate (pom.xml vs build.gradle) and
+                    Dockerfile build stage this app scaffolds with.
+                  enum: [maven, gradle]
+                  default: maven
+                groupId:
+                  type: string
+                  description: >-
+                    Maven groupId / Gradle group - also this app's single Java package
+                    (see this XRD's own header for why it's one flat package, not
+                    groupId+artifactId nested). Lowercase, dot-separated Java package
+                    name.
+                  pattern: "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$"
+                  default: io.idp.apps
+                port:
+                  type: integer
+                  description: >-
+                    Port the boilerplate Spring Boot app listens on (server.port,
+                    also the Dockerfile's EXPOSE). Matches idp-application's own
+                    rollout.ports default convention.
+                  minimum: 1
+                  maximum: 65535
+                  default: 8080
+                visibility:
+                  type: string
+                  description: GitHub visibility for both the src and gitops repos.
+                  enum: [private, public]
+                  default: private
+              required: ["devCluster"]
+          required: ["spec"]

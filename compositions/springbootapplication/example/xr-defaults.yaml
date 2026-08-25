@@ -1,0 +1,19 @@
+# crossplane render doesn't run the XRD's own OpenAPI schema defaulting (that's real
+# apiserver/CRD-admission behavior, not something the offline render tool replicates) -
+# so this fixture spells out the XRD's actual defaults explicitly rather than relying on
+# `spec: {}`, which would leave every field <no value> in the rendered output instead of
+# exercising the real default values a live cluster would apply. See ../../../xrds/
+# springbootapplication.yaml for these being schema-level defaults, not template-side
+# ones.
+apiVersion: catalog.idp.io/v1alpha1
+kind: SpringBootApplication
+metadata:
+  name: widget-service
+  namespace: demo-apps
+spec:
+  devCluster: kind-dev
+  javaVersion: "21"
+  buildTool: maven
+  groupId: io.idp.apps
+  port: 8080
+  visibility: private

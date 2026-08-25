@@ -1,0 +1,715 @@
+# GENERATED FILE - do not hand-edit the pipeline's `input.inline.template` blocks
+# below. Edit templates/render-github-resources/*.yaml or
+# templates/cicd-onboarding-status/*.yaml instead, then run ./build-composition.sh to
+# regenerate this file.
+#
+# Two function-go-templating steps, not one (compositions/nodejsapplication's own
+# pattern, ported unchanged): render-github-resources composes the real provider-github
+# managed resources (Repository/RepositoryFile - see idp/docs/
+# service-catalog-design.md §1), cicd-onboarding-status patches the XR's own status
+# afterward to force Ready: False with a clear reason (see that template's own header
+# for the mechanism and why). Both share the ONE already-installed
+# function-go-templating Function via source: Inline - registering a second Function
+# package pointing at the same reference corrupted Crossplane's shared dependency-lock
+# graph cluster-wide, a real bug hit live building the SLO Composition (see
+# compositions/slo/build-composition.sh's own header) - never repeat that here.
+#
+# Delimiters: << >> instead of Go's default {{ }}, matching every other Composition in
+# this catalog; `<<setResourceNameAnnotation ...>>` calls below are
+# function-go-templating's own helper, unaffected by the delimiter choice.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: springbootapplications.catalog.idp.io
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.idp.io/v1alpha1
+    kind: SpringBootApplication
+  mode: Pipeline
+  pipeline:
+    - step: render-github-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            # Real Crossplane extra-resources lookup against the cluster registry
+            # (gitops-cluster-dev/00-bootstrap/cluster-registry/, service-catalog-design.md §0) -
+            # identical mechanism to nodejsapplication's own 00-devcluster-gate.yaml (this file is a
+            # straight port, not a redesign - see that file's own header for the full "why" this
+            # gate exists and why $tenantsRepo comes from registry data rather than a hardcoded
+            # literal).
+            #
+            # $clusterOk/$xrName/$devCluster/$tenantsRepo are declared once here, not redeclared per
+            # file below - Go template variables declared at this (unindented) scope persist for the
+            # rest of THIS pipeline step's execution across the --- separators (same
+            # concatenated-template convention nodejsapplication's own gate file documents).
+            # cicd-onboarding-status/status.yaml is a SEPARATE pipeline step (its own template
+            # execution scope) and redeclares this same lookup itself.
+            #
+            # Deliberately ONE YAML document in this file, not two - see nodejsapplication's own
+            # gate file for why (computing everything up front via template actions with no literal
+            # output, before the ExtraResources document itself, avoids an untested "does
+            # function-go-templating tolerate a blank rendered document" question entirely).
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $devCluster := $spec.devCluster >>
+            <<- $allExtra := .extraResources | default dict >>
+            <<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+            <<- $items := index $entry "items" | default list >>
+            <<- $clusterOk := false >>
+            <<- $clusterType := "" >>
+            <<- $cicdReady := "" >>
+            <<- $tenantsRepo := "" >>
+            <<- if gt (len $items) 0 >>
+              <<- $cm := (index $items 0).resource >>
+              <<- $clusterType = $cm.data.type >>
+              <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+              <<- $tenantsRepo = index $cm.data "tenantsRepo" | default "" >>
+              <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+                <<- $clusterOk = true >>
+              <<- end >>
+            <<- end >>
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ExtraResources
+            requirements:
+              devcluster-registry-entry:
+                apiVersion: v1
+                kind: ConfigMap
+                namespace: crossplane-system
+                matchName: <<$devCluster>>
+            ---
+            # Commits tenants/<app-name>/identity.yaml into this app's devCluster's own tenants
+            # repo - identical mechanism, identical file shape, to nodejsapplication's own
+            # cicd-identity-yaml.yaml (this file is a straight port, not a redesign - see that
+            # file's own header for the full history: why identity.yaml absorbed app.yaml, why no
+            # .git suffix, why $tenantsRepo is registry data not a hardcoded literal). Read by the
+            # same two independent ApplicationSets NodeJSApplication's identity.yaml is: platform-
+            # cicd's tenant-onboarding ApplicationSet (stands up this app's CICD pipeline) and idp's
+            # own tenant-appprojects ApplicationSet (builds this app's AppProject).
+            #
+            # type: app (not infra) - SpringBootApplication only ever provisions regular
+            # applications, never platform-adjacent services, so this is a fixed literal, not a
+            # spec field. catalogNamespace: platform-catalog - fixed platform convention, matches
+            # every other tenant's identity.yaml (platform-cicd/docs/onboarding.md step 3).
+            #
+            # All six platformIdentity fields are present even though platform-cicd's own docs allow
+            # "" for unused ones - gitopsRepoUrl/appRepoUrl are always real here
+            # (SpringBootApplication always provisions both repos), so there's nothing to leave
+            # empty.
+            <<- $platformOwner := "jfillman" >>
+            <<- $gitopsRepoUrl := printf "https://github.com/%s/gitops-%s" $platformOwner $xrName >>
+            <<- $appRepoUrl := printf "https://github.com/%s/%s" $platformOwner $xrName >>
+            <<- if $clusterOk >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-cicd-identity-yaml
+              annotations:
+                <<setResourceNameAnnotation "cicd-identity-yaml">>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$tenantsRepo>>
+                file: <<printf "tenants/%s/identity.yaml" $xrName>>
+                overwriteOnCreate: true
+                content: |
+                  platformIdentity:
+                    appName: <<$xrName>>
+                    type: app
+                    gitopsRepoUrl: <<$gitopsRepoUrl>>
+                    appRepoUrl: <<$appRepoUrl>>
+                    githubOwner: <<$platformOwner>>
+                    catalogNamespace: platform-catalog
+                commitMessage: <<printf "Onboard %s: add tenants/%s/identity.yaml for CICD pipeline onboarding" $xrName $xrName | toJson>>
+            <<- end >>
+            ---
+            # Empty, scaffolded gitops-<app-name> repo - idp/docs/service-catalog-design.md Item 1/2,
+            # identical mechanism to nodejsapplication's own gitops-repo.yaml (straight port). Just a
+            # README for now; the real <cluster>/<env>/values.yaml layout gets populated once
+            # ApplicationEnvironment exists.
+            #
+            # crossplane.io/external-name below - same fix, same reasoning as src-repo.yaml's own
+            # header: a cluster rebuild's fresh Repository MR has no external-name, so
+            # provider-github tries to Create a repo that already exists on GitHub and 422s. Set to
+            # the deterministic gitops-<app> name up front so it Observes/adopts instead.
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $visibility := $spec.visibility >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: Repository
+            metadata:
+              name: <<$xrName>>-gitops
+              annotations:
+                <<setResourceNameAnnotation "gitops-repo">>
+                crossplane.io/external-name: <<printf "gitops-%s" $xrName>>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                name: <<printf "gitops-%s" $xrName>>
+                description: <<printf "GitOps deployment repo for %s - <cluster>/<env>/values.yaml per environment" $xrName | toJson>>
+                visibility: <<$visibility>>
+                autoInit: true
+                # See src-repo.yaml's own header for why this is explicit, not omitted -
+                # terraform-provider-github's schema default ("enabled") isn't actually
+                # PATCHable on this account's private repos (422, no GHAS entitlement),
+                # unlike an explicit "disabled".
+                securityAndAnalysis:
+                  - secretScanning:
+                      - status: disabled
+                    secretScanningPushProtection:
+                      - status: disabled
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-gitops-readme
+              annotations:
+                <<setResourceNameAnnotation "gitops-repo-readme">>
+            spec:
+              # No "Update" - same fix, same reasoning as src-repo.yaml's own scaffold files - a
+              # scaffolded README a developer might reasonably edit shouldn't get drift-corrected
+              # back to this static template.
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<printf "gitops-%s" $xrName>>
+                file: README.md
+                overwriteOnCreate: true
+                content: |
+                  # gitops-<<$xrName>>
+
+                  GitOps deployment repo for `<<$xrName>>`, scaffolded by `SpringBootApplication`
+                  (idp-service-catalog). Empty until this app's first `ApplicationEnvironment`
+                  resource is created - each environment gets its own `<cluster>/<env>/values.yaml`
+                  here, rendered by `idp-application` (idp-service-catalog's shared Helm chart).
+                commitMessage: "SpringBootApplication scaffold: README.md"
+            ---
+            # Commits a "shared"-mode SecretStore XR manifest into
+            # tenants/<app-name>/xr-requests/secretstore.yaml - identical mechanism to
+            # nodejsapplication's own secretstore-xr.yaml (straight port; see that file's own header
+            # for the full design history/rationale). Picked up by this app's own devCluster's
+            # xr-requests ApplicationSet (gitops-cluster-dev/02-argocd-apps/xr-requests/, for
+            # kind-dev), applied directly (no Helm release needed) into app-<app-name>-cicd on that
+            # cluster.
+            #
+            # spec.devCluster, not a hardcoded "kind-dev": this is the app's OWN dev-cluster secrets
+            # store, always exactly one, matching xrds/secretstore.yaml's own "one shared
+            # environment for the dev cluster" scope (no per-env store on a dev cluster). $clusterOk/
+            # $tenantsRepo come from 00-devcluster-gate.yaml (same pipeline step), which also
+            # validates spec.devCluster live against the cluster registry before this resource
+            # renders at all.
+            <<- if $clusterOk >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-secretstore-xr
+              annotations:
+                <<setResourceNameAnnotation "secretstore-xr">>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$tenantsRepo>>
+                file: <<printf "tenants/%s/xr-requests/secretstore.yaml" $xrName>>
+                overwriteOnCreate: true
+                content: |
+                  apiVersion: catalog.idp.io/v1alpha1
+                  kind: SecretStore
+                  metadata:
+                    name: <<printf "%s-%s" $xrName $devCluster>>
+                  spec:
+                    appRef:
+                      name: <<$xrName>>
+                    cluster: <<$devCluster>>
+                commitMessage: <<printf "Onboard %s: add tenants/%s/xr-requests/secretstore.yaml" $xrName $xrName | toJson>>
+            <<- end >>
+            ---
+            # Src repo + Java/Spring Boot boilerplate. Rendered by function-go-templating (source:
+            # Inline, see ../composition.yaml/../build-composition.sh), using double-angle-bracket
+            # delimiters - same convention as nodejsapplication's own src-repo.yaml, for the same
+            # reason (Go's default curly-brace delimiter would collide with literal template syntax
+            # elsewhere; here it dodges Java's own braces needing no escaping at all, kept
+            # consistent anyway).
+            #
+            # NOTE: never write two literal angle-bracket delimiter characters adjacent to each
+            # other anywhere in this file outside a real action, including in comments - the lexer
+            # scans raw text for the delimiter pair regardless of YAML comment syntax, and an
+            # accidental empty action fails the whole render (hit live building nodejsapplication's
+            # own copy of this file).
+            #
+            # repo.github.m.upbound.io (namespaced managed resources), not the Cluster-scoped
+            # repo.github.upbound.io family - see provider-github-config.yaml's own header for why.
+            # providerConfigRef.kind: ClusterProviderConfig is required, not defaulted.
+            #
+            # Repository's own forProvider has no owner field - every repo this ProviderConfig's
+            # credential can create lands under whichever owner that credential is scoped to.
+            # autoInit: true - RepositoryFile requires the target branch to already exist, which an
+            # empty repo doesn't have.
+            #
+            # crossplane.io/external-name on the Repository below - same live-bug fix as
+            # nodejsapplication's own src-repo.yaml (a cluster rebuild's fresh Repository MR has no
+            # external-name, so provider-github tries to Create a repo that already exists on GitHub
+            # and 422s; setting external-name up front makes the MR import/adopt the existing repo
+            # instead).
+            #
+            # managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"] (no "Update") on
+            # every RepositoryFile below - same reasoning as nodejsapplication's own scaffold files:
+            # these are real app source a developer is expected to edit immediately after
+            # scaffolding, and the provider's default "*" policy would drift-correct any such edit
+            # back to this static template on its next reconcile (a real bug hit live for
+            # checkout-api's package.json - never repeat it here). Create-once-then-hands-off is
+            # what "scaffold" is supposed to mean.
+            #
+            # One flat Java package (spec.groupId itself, not groupId+artifactId nested) - see
+            # xrds/springbootapplication.yaml's own header for why: $xrName is kebab-case metadata.name
+            # and isn't a legal Java package-name segment, so the single scaffolded class lives
+            # directly in the groupId package rather than attempting a kebab-to-camelCase
+            # derivation. $packagePath is groupId with dots replaced by slashes, for the file's
+            # RepositoryFile path.
+            #
+            # springBootVersion is a template literal, not a spec field - see the XRD's own header
+            # for why (the platform, not each app, picks and centrally upgrades the framework
+            # version).
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $description := $spec.description | default (printf "%s - a Spring Boot application" $xrName) >>
+            <<- $javaVersion := $spec.javaVersion >>
+            <<- $buildTool := $spec.buildTool >>
+            <<- $groupId := $spec.groupId >>
+            <<- $packagePath := $groupId | replace "." "/" >>
+            <<- $port := $spec.port >>
+            <<- $visibility := $spec.visibility >>
+            <<- $springBootVersion := "3.3.4" >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: Repository
+            metadata:
+              name: <<$xrName>>-src
+              annotations:
+                <<setResourceNameAnnotation "src-repo">>
+                crossplane.io/external-name: <<$xrName>>
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                name: <<$xrName>>
+                description: <<$description | toJson>>
+                visibility: <<$visibility>>
+                autoInit: true
+                hasIssues: true
+                deleteBranchOnMerge: true
+                # Explicit, not omitted - see nodejsapplication's own src-repo.yaml header for the
+                # real live 422 this avoids (terraform-provider-github late-inits "enabled", GitHub
+                # rejects PATCHing it back on this account's private repos with no GHAS
+                # entitlement).
+                securityAndAnalysis:
+                  - secretScanning:
+                      - status: disabled
+                    secretScanningPushProtection:
+                      - status: disabled
+            ---
+            <<- if eq $buildTool "gradle" >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-build-gradle
+              annotations:
+                <<setResourceNameAnnotation "src-repo-build-file">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: build.gradle
+                overwriteOnCreate: true
+                content: |
+                  plugins {
+                      id 'org.springframework.boot' version '<<$springBootVersion>>'
+                      id 'io.spring.dependency-management' version '1.1.6'
+                      id 'java'
+                  }
+
+                  group = '<<$groupId>>'
+                  version = '0.1.0'
+
+                  java {
+                      toolchain {
+                          languageVersion = JavaLanguageVersion.of(<<$javaVersion>>)
+                      }
+                  }
+
+                  repositories {
+                      mavenCentral()
+                  }
+
+                  dependencies {
+                      implementation 'org.springframework.boot:spring-boot-starter-web'
+                      implementation 'org.springframework.boot:spring-boot-starter-actuator'
+                  }
+                commitMessage: "SpringBootApplication scaffold: build.gradle"
+            <<- else >>
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-pom-xml
+              annotations:
+                <<setResourceNameAnnotation "src-repo-build-file">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: pom.xml
+                overwriteOnCreate: true
+                content: |
+                  <?xml version="1.0" encoding="UTF-8"?>
+                  <project xmlns="http://maven.apache.org/POM/4.0.0"
+                           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                           xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+                    <modelVersion>4.0.0</modelVersion>
+
+                    <parent>
+                      <groupId>org.springframework.boot</groupId>
+                      <artifactId>spring-boot-starter-parent</artifactId>
+                      <version><<$springBootVersion>></version>
+                      <relativePath/>
+                    </parent>
+
+                    <groupId><<$groupId>></groupId>
+                    <artifactId><<$xrName>></artifactId>
+                    <version>0.1.0</version>
+                    <packaging>jar</packaging>
+
+                    <properties>
+                      <java.version><<$javaVersion>></java.version>
+                    </properties>
+
+                    <dependencies>
+                      <dependency>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-starter-web</artifactId>
+                      </dependency>
+                      <dependency>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-starter-actuator</artifactId>
+                      </dependency>
+                    </dependencies>
+
+                    <build>
+                      <plugins>
+                        <plugin>
+                          <groupId>org.springframework.boot</groupId>
+                          <artifactId>spring-boot-maven-plugin</artifactId>
+                        </plugin>
+                      </plugins>
+                    </build>
+                  </project>
+                commitMessage: "SpringBootApplication scaffold: pom.xml"
+            <<- end >>
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-application-java
+              annotations:
+                <<setResourceNameAnnotation "src-repo-application-java">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: <<printf "src/main/java/%s/Application.java" $packagePath>>
+                overwriteOnCreate: true
+                content: |
+                  package <<$groupId>>;
+
+                  import org.springframework.boot.SpringApplication;
+                  import org.springframework.boot.autoconfigure.SpringBootApplication;
+                  import org.springframework.web.bind.annotation.GetMapping;
+                  import org.springframework.web.bind.annotation.RestController;
+
+                  @SpringBootApplication
+                  @RestController
+                  public class Application {
+
+                      public static void main(String[] args) {
+                          SpringApplication.run(Application.class, args);
+                      }
+
+                      @GetMapping("/")
+                      public String home() {
+                          return <<printf "Hello from %s" $xrName | toJson>>;
+                      }
+                  }
+                commitMessage: "SpringBootApplication scaffold: Application.java"
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-application-properties
+              annotations:
+                <<setResourceNameAnnotation "src-repo-application-properties">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: src/main/resources/application.properties
+                overwriteOnCreate: true
+                content: |
+                  spring.application.name=<<$xrName>>
+                  server.port=${PORT:<<$port>>}
+                  management.endpoints.web.exposure.include=health,info
+                commitMessage: "SpringBootApplication scaffold: application.properties"
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-dockerfile
+              annotations:
+                <<setResourceNameAnnotation "src-repo-dockerfile">>
+              # Multi-stage: build stage carries a full JDK plus the build tool (installed via apk,
+              # no bundled wrapper script - deliberately narrower than Maven/Gradle wrapper scaffolding,
+              # matching this catalog's "deliberately narrow" scope elsewhere), final stage is a bare
+              # JRE running only the packaged jar - keeps the shipped image's dependency surface (and
+              # CVE exposure - see nodejsapplication's own Dockerfile header for the real live
+              # precedent this follows) to the JRE plus the app's own runtime deps, not a JDK/build
+              # toolchain nobody needs at runtime. `apk upgrade` on the runtime stage picks up
+              # already-published Alpine package patches, same as nodejsapplication's own Dockerfile.
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: Dockerfile
+                overwriteOnCreate: true
+                content: |
+                  FROM eclipse-temurin:<<$javaVersion>>-jdk-alpine AS build
+                  WORKDIR /app
+                  <<- if eq $buildTool "gradle">>
+                  RUN apk add --no-cache gradle
+                  COPY build.gradle ./
+                  COPY src ./src
+                  RUN gradle build -x test --no-daemon
+                  <<- else>>
+                  RUN apk add --no-cache maven
+                  COPY pom.xml ./
+                  COPY src ./src
+                  RUN mvn -q -DskipTests package
+                  <<- end>>
+
+                  FROM eclipse-temurin:<<$javaVersion>>-jre-alpine
+                  WORKDIR /app
+                  RUN apk upgrade --no-cache
+                  <<- if eq $buildTool "gradle">>
+                  COPY --from=build /app/build/libs/*.jar app.jar
+                  <<- else>>
+                  COPY --from=build /app/target/*.jar app.jar
+                  <<- end>>
+                  EXPOSE <<$port>>
+                  CMD ["java", "-jar", "app.jar"]
+                commitMessage: "SpringBootApplication scaffold: Dockerfile"
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-gitignore
+              annotations:
+                <<setResourceNameAnnotation "src-repo-gitignore">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: .gitignore
+                overwriteOnCreate: true
+                content: |
+                  <<- if eq $buildTool "gradle">>
+                  .gradle/
+                  build/
+                  <<- else>>
+                  target/
+                  <<- end>>
+                  *.log
+                  .env
+                commitMessage: "SpringBootApplication scaffold: .gitignore"
+            ---
+            apiVersion: repo.github.m.upbound.io/v1alpha1
+            kind: RepositoryFile
+            metadata:
+              name: <<$xrName>>-src-readme
+              annotations:
+                <<setResourceNameAnnotation "src-repo-readme">>
+            spec:
+              managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: default
+              forProvider:
+                repository: <<$xrName>>
+                file: README.md
+                overwriteOnCreate: true
+                content: |
+                  # <<$xrName>>
+
+                  <<$description>>
+
+                  Scaffolded by `SpringBootApplication` (idp-service-catalog). Java <<$javaVersion>>,
+                  <<$buildTool>>.
+
+                  <<- if eq $buildTool "gradle">>
+
+                  ```
+                  gradle bootRun
+                  ```
+                  <<- else>>
+
+                  ```
+                  mvn spring-boot:run
+                  ```
+                  <<- end>>
+
+                  Health check: `GET /actuator/health` (Spring Boot Actuator, enabled by default).
+
+                  **CICD pipeline onboarding**: this app's `SpringBootApplication` resource carries a
+                  `CicdOnboarded` condition tracking whether `platform-cicd`'s tenant-onboarding
+                  ApplicationSet has picked up this app's committed tenant identity yet. See the
+                  resource's own status for details.
+                commitMessage: "SpringBootApplication scaffold: README.md"
+            ---
+        delims:
+          left: "<<"
+          right: ">>"
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready
+    - step: cicd-onboarding-status
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            # Surfaces the CICD-onboarding status as a custom condition, not an override of the
+            # standard Ready condition - identical mechanism to nodejsapplication's own
+            # cicd-onboarding-status/status.yaml (straight port; see that file's own header and
+            # xrds/springbootapplication.yaml's own header for the full "why" this exists -
+            # function-go-templating reserves Ready/Healthy/Synced and errors if a Composition
+            # tries to set them directly).
+            #
+            # DevClusterReady: redeclares the SAME ExtraResources requirement
+            # render-github-resources/00-devcluster-gate.yaml already declares in its own, separate
+            # pipeline step - this step gets none of that step's variables for free. When this is
+            # False, CicdOnboarded staying False too is expected/correct, not a second bug: nothing
+            # in render-github-resources rendered at all (00-devcluster-gate.yaml's own $clusterOk
+            # gates cicd-identity-yaml.yaml and secretstore-xr.yaml both).
+            <<- $xrName := .observed.composite.resource.metadata.name >>
+            <<- $spec := .observed.composite.resource.spec >>
+            <<- $devCluster := $spec.devCluster >>
+            <<- $allExtra := .extraResources | default dict >>
+            <<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+            <<- $items := index $entry "items" | default list >>
+            <<- $clusterOk := false >>
+            <<- $clusterType := "" >>
+            <<- $cicdReady := "" >>
+            <<- if gt (len $items) 0 >>
+              <<- $cm := (index $items 0).resource >>
+              <<- $clusterType = $cm.data.type >>
+              <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+              <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+                <<- $clusterOk = true >>
+              <<- end >>
+            <<- end >>
+            <<- $allObserved := .observed.resources | default dict >>
+            <<- $identityRes := index $allObserved "cicd-identity-yaml" | default dict >>
+            <<- $identityMR := index $identityRes "resource" | default dict >>
+            <<- $identityStatus := index $identityMR "status" | default dict >>
+            <<- $identityConditions := index $identityStatus "conditions" | default list >>
+            <<- $identityReady := false >>
+            <<- range $identityConditions >>
+              <<- if and (eq .type "Ready") (eq .status "True") >>
+                <<- $identityReady = true >>
+              <<- end >>
+            <<- end >>
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ExtraResources
+            requirements:
+              devcluster-registry-entry:
+                apiVersion: v1
+                kind: ConfigMap
+                namespace: crossplane-system
+                matchName: <<$devCluster>>
+            ---
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ClaimConditions
+            conditions:
+            <<- if $clusterOk >>
+              - type: DevClusterReady
+                status: "True"
+                reason: DevClusterReady
+                message: >-
+                  <<$devCluster>> is a registered, cicdReady dev cluster - <<$xrName>> onboards
+                  onto it.
+                target: CompositeAndClaim
+            <<- else >>
+              - type: DevClusterReady
+                status: "False"
+                reason: DevClusterNotReady
+                message: >-
+                  spec.devCluster (<<$devCluster>>) doesn't resolve to a registered ConfigMap
+                  with type: dev and cicdReady: "true" in the cluster registry
+                  (gitops-cluster-dev/00-bootstrap/cluster-registry/) - no CICD-onboarding or
+                  secrets-infrastructure resources are rendered until it does, rather than
+                  partially succeeding against a cluster that may not exist or isn't ready yet.
+                target: CompositeAndClaim
+            <<- end >>
+            <<- if $identityReady >>
+              - type: CicdOnboarded
+                status: "True"
+                reason: CicdOnboarded
+                message: >-
+                  <<$xrName>>'s tenants/<<$xrName>>/identity.yaml committed to its devCluster's
+                  tenants repo - platform-cicd's tenant-onboarding ApplicationSet picks it up on
+                  its next poll and stands up the real app-<<$xrName>>-cicd CICD pipeline.
+                target: CompositeAndClaim
+            <<- else >>
+              - type: CicdOnboarded
+                status: "False"
+                reason: CicdOnboardingPending
+                message: >-
+                  <<$xrName>>'s src/gitops repos and tenant identity are provisioned, and
+                  tenants/<<$xrName>>/identity.yaml has been committed to its devCluster's
+                  tenants repo, but that RepositoryFile isn't Ready yet (provider-github still
+                  reconciling the commit), or spec.devCluster isn't DevClusterReady yet (see
+                  that condition). Resolves itself once it is - no XR edit needed.
+                target: CompositeAndClaim
+            <<- end >>
+            ---
+        delims:
+          left: "<<"
+          right: ">>"

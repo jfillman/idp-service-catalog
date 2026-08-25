@@ -1,0 +1,94 @@
+# Surfaces the CICD-onboarding status as a custom condition, not an override of the
+# standard Ready condition - identical mechanism to nodejsapplication's own
+# cicd-onboarding-status/status.yaml (straight port; see that file's own header and
+# xrds/springbootapplication.yaml's own header for the full "why" this exists -
+# function-go-templating reserves Ready/Healthy/Synced and errors if a Composition
+# tries to set them directly).
+#
+# DevClusterReady: redeclares the SAME ExtraResources requirement
+# render-github-resources/00-devcluster-gate.yaml already declares in its own, separate
+# pipeline step - this step gets none of that step's variables for free. When this is
+# False, CicdOnboarded staying False too is expected/correct, not a second bug: nothing
+# in render-github-resources rendered at all (00-devcluster-gate.yaml's own $clusterOk
+# gates cicd-identity-yaml.yaml and secretstore-xr.yaml both).
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $devCluster := $spec.devCluster >>
+<<- $allExtra := .extraResources | default dict >>
+<<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+<<- $items := index $entry "items" | default list >>
+<<- $clusterOk := false >>
+<<- $clusterType := "" >>
+<<- $cicdReady := "" >>
+<<- if gt (len $items) 0 >>
+  <<- $cm := (index $items 0).resource >>
+  <<- $clusterType = $cm.data.type >>
+  <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+  <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+    <<- $clusterOk = true >>
+  <<- end >>
+<<- end >>
+<<- $allObserved := .observed.resources | default dict >>
+<<- $identityRes := index $allObserved "cicd-identity-yaml" | default dict >>
+<<- $identityMR := index $identityRes "resource" | default dict >>
+<<- $identityStatus := index $identityMR "status" | default dict >>
+<<- $identityConditions := index $identityStatus "conditions" | default list >>
+<<- $identityReady := false >>
+<<- range $identityConditions >>
+  <<- if and (eq .type "Ready") (eq .status "True") >>
+    <<- $identityReady = true >>
+  <<- end >>
+<<- end >>
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ExtraResources
+requirements:
+  devcluster-registry-entry:
+    apiVersion: v1
+    kind: ConfigMap
+    namespace: crossplane-system
+    matchName: <<$devCluster>>
+---
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ClaimConditions
+conditions:
+<<- if $clusterOk >>
+  - type: DevClusterReady
+    status: "True"
+    reason: DevClusterReady
+    message: >-
+      <<$devCluster>> is a registered, cicdReady dev cluster - <<$xrName>> onboards
+      onto it.
+    target: CompositeAndClaim
+<<- else >>
+  - type: DevClusterReady
+    status: "False"
+    reason: DevClusterNotReady
+    message: >-
+      spec.devCluster (<<$devCluster>>) doesn't resolve to a registered ConfigMap
+      with type: dev and cicdReady: "true" in the cluster registry
+      (gitops-cluster-dev/00-bootstrap/cluster-registry/) - no CICD-onboarding or
+      secrets-infrastructure resources are rendered until it does, rather than
+      partially succeeding against a cluster that may not exist or isn't ready yet.
+    target: CompositeAndClaim
+<<- end >>
+<<- if $identityReady >>
+  - type: CicdOnboarded
+    status: "True"
+    reason: CicdOnboarded
+    message: >-
+      <<$xrName>>'s tenants/<<$xrName>>/identity.yaml committed to its devCluster's
+      tenants repo - platform-cicd's tenant-onboarding ApplicationSet picks it up on
+      its next poll and stands up the real app-<<$xrName>>-cicd CICD pipeline.
+    target: CompositeAndClaim
+<<- else >>
+  - type: CicdOnboarded
+    status: "False"
+    reason: CicdOnboardingPending
+    message: >-
+      <<$xrName>>'s src/gitops repos and tenant identity are provisioned, and
+      tenants/<<$xrName>>/identity.yaml has been committed to its devCluster's
+      tenants repo, but that RepositoryFile isn't Ready yet (provider-github still
+      reconciling the commit), or spec.devCluster isn't DevClusterReady yet (see
+      that condition). Resolves itself once it is - no XR edit needed.
+    target: CompositeAndClaim
+<<- end >>

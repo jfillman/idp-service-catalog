@@ -1,0 +1,45 @@
+# Real Crossplane extra-resources lookup against the cluster registry
+# (gitops-cluster-dev/00-bootstrap/cluster-registry/, service-catalog-design.md §0) -
+# identical mechanism to nodejsapplication's own 00-devcluster-gate.yaml (this file is a
+# straight port, not a redesign - see that file's own header for the full "why" this
+# gate exists and why $tenantsRepo comes from registry data rather than a hardcoded
+# literal).
+#
+# $clusterOk/$xrName/$devCluster/$tenantsRepo are declared once here, not redeclared per
+# file below - Go template variables declared at this (unindented) scope persist for the
+# rest of THIS pipeline step's execution across the --- separators (same
+# concatenated-template convention nodejsapplication's own gate file documents).
+# cicd-onboarding-status/status.yaml is a SEPARATE pipeline step (its own template
+# execution scope) and redeclares this same lookup itself.
+#
+# Deliberately ONE YAML document in this file, not two - see nodejsapplication's own
+# gate file for why (computing everything up front via template actions with no literal
+# output, before the ExtraResources document itself, avoids an untested "does
+# function-go-templating tolerate a blank rendered document" question entirely).
+<<- $xrName := .observed.composite.resource.metadata.name >>
+<<- $spec := .observed.composite.resource.spec >>
+<<- $devCluster := $spec.devCluster >>
+<<- $allExtra := .extraResources | default dict >>
+<<- $entry := index $allExtra "devcluster-registry-entry" | default dict >>
+<<- $items := index $entry "items" | default list >>
+<<- $clusterOk := false >>
+<<- $clusterType := "" >>
+<<- $cicdReady := "" >>
+<<- $tenantsRepo := "" >>
+<<- if gt (len $items) 0 >>
+  <<- $cm := (index $items 0).resource >>
+  <<- $clusterType = $cm.data.type >>
+  <<- $cicdReady = index $cm.data "cicdReady" | default "" >>
+  <<- $tenantsRepo = index $cm.data "tenantsRepo" | default "" >>
+  <<- if and (eq $clusterType "dev") (eq $cicdReady "true") >>
+    <<- $clusterOk = true >>
+  <<- end >>
+<<- end >>
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ExtraResources
+requirements:
+  devcluster-registry-entry:
+    apiVersion: v1
+    kind: ConfigMap
+    namespace: crossplane-system
+    matchName: <<$devCluster>>

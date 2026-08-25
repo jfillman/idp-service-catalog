@@ -1,0 +1,13 @@
+apiVersion: catalog.idp.io/v1alpha1
+kind: SpringBootApplication
+metadata:
+  name: checkout-payments
+  namespace: demo-apps
+spec:
+  devCluster: kind-dev
+  description: Payments service for the demo storefront
+  javaVersion: "17"
+  buildTool: gradle
+  groupId: com.example.storefront
+  port: 9090
+  visibility: public
