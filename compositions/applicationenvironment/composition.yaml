@@ -38,11 +38,16 @@ spec:
         source: Inline
         inline:
           template: |
-            # ExtraResources lookup resolving which real XR kind $appName actually is -
-            # NodeJSApplication or SpringBootApplication. Added once SpringBootApplication went
-            # from "future" (xrds/applicationenvironment.yaml's own appName description already
-            # anticipated it, written before either existed) to real and app-usage.yaml's
-            # previously-hardcoded `kind: NodeJSApplication` was found live to break it.
+            # ExtraResources lookup resolving which real XR kind $appName actually is - one of
+            # NodeJSApplication, SpringBootApplication, PythonApplication, or GoApplication.
+            # Added once SpringBootApplication went from "future" (xrds/applicationenvironment.yaml's
+            # own appName description already anticipated it, written before either existed) to
+            # real and app-usage.yaml's previously-hardcoded `kind: NodeJSApplication` was found
+            # live to break it. Extended again for PythonApplication/GoApplication - found live
+            # the same way: search-api-kind-prod-prod's Usage resolved to `of: {kind:
+            # NodeJSApplication}` (this gate's own prior default-if-neither-resolves fallback),
+            # which doesn't exist for a PythonApplication-owned app, stuck at Ready: False the
+            # same way order-api's did before this gate existed at all.
             #
             # That hardcoding wasn't just wrong labeling: app-usage.yaml's own header claimed a
             # Usage whose `of` target doesn't exist is "simply never matched...harmless no-op" -
@@ -54,9 +59,9 @@ spec:
             # stuck at Ready: False until this fix; checkout-api-kind-prod-prod (a real
             # NodeJSApplication) unaffected throughout, its Usage already Ready: True.
             #
-            # Two separate ExtraResources requirements, not one - Crossplane requirements are
-            # typed per GVK, no "try kind A, fall back to kind B" primitive exists. Defaults to
-            # NodeJSApplication if neither resolves yet - same "not found yet, retry next
+            # Four separate ExtraResources requirements, not one - Crossplane requirements are
+            # typed per GVK, no "try kind A, fall back to kind B, ..." primitive exists. Defaults
+            # to NodeJSApplication if none resolve yet - same "not found yet, retry next
             # reconcile" two-pass shape every other gate in this Composition already has, and
             # preserves this Composition's prior behavior for the common case.
             #
@@ -74,11 +79,19 @@ spec:
             <<- $nodejsItems := index $nodejsEntry "items" | default list >>
             <<- $springbootEntry := index $allExtra "app-kind-springboot" | default dict >>
             <<- $springbootItems := index $springbootEntry "items" | default list >>
+            <<- $pythonEntry := index $allExtra "app-kind-python" | default dict >>
+            <<- $pythonItems := index $pythonEntry "items" | default list >>
+            <<- $goEntry := index $allExtra "app-kind-go" | default dict >>
+            <<- $goItems := index $goEntry "items" | default list >>
             <<- $appKind := "NodeJSApplication" >>
             <<- if gt (len $nodejsItems) 0 >>
               <<- $appKind = "NodeJSApplication" >>
             <<- else if gt (len $springbootItems) 0 >>
               <<- $appKind = "SpringBootApplication" >>
+            <<- else if gt (len $pythonItems) 0 >>
+              <<- $appKind = "PythonApplication" >>
+            <<- else if gt (len $goItems) 0 >>
+              <<- $appKind = "GoApplication" >>
             <<- end >>
             apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
             kind: ExtraResources
@@ -91,6 +104,16 @@ spec:
               app-kind-springboot:
                 apiVersion: catalog.idp.io/v1alpha1
                 kind: SpringBootApplication
+                namespace: <<$xrNamespace>>
+                matchName: <<$appName>>
+              app-kind-python:
+                apiVersion: catalog.idp.io/v1alpha1
+                kind: PythonApplication
+                namespace: <<$xrNamespace>>
+                matchName: <<$appName>>
+              app-kind-go:
+                apiVersion: catalog.idp.io/v1alpha1
+                kind: GoApplication
                 namespace: <<$xrNamespace>>
                 matchName: <<$appName>>
             ---

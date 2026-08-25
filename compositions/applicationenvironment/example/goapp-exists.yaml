@@ -1,0 +1,15 @@
+# --required-resources fixture: simulates a real GoApplication XR named
+# "widget-service" already existing in the same namespace as xr-staging.yaml's XR
+# (demo-apps) - what 00-app-kind-gate.yaml's own ExtraResources lookup would find for
+# a GoApplication-owned app. Paired with xr-staging.yaml + cluster-registry-ready.yaml
+# to prove app-usage.yaml's Usage resolves kind: GoApplication instead of the
+# NodeJSApplication default - see 00-app-kind-gate.yaml's own header for why this
+# matters (confirmed live on process-api-kind-prod-prod, same class of bug
+# springboot-app-exists.yaml's own fixture already proved for SpringBootApplication).
+apiVersion: catalog.idp.io/v1alpha1
+kind: GoApplication
+metadata:
+  name: widget-service
+  namespace: demo-apps
+spec:
+  devCluster: kind-dev
