@@ -148,14 +148,12 @@ Deployments (kind-dev, kind-prod) needed the update - not scoped to
 
 ## Known gaps (real, not hidden)
 
-- **Image is pushed to a registry now (`ghcr.io/jfillman/infisical-secretstore-
-  operator:dev`, since 2026-08-26 - a third cluster, kind-man, needed the image and
-  made the old `kind load`-per-cluster loop unworkable), but there's still no CI
-  pipeline** - a new build still means a manual `podman build && podman push`,
-  followed by hand-editing every cluster's `deployment.yaml` `image:` field (there's
-  no shared tag-tracking mechanism, e.g. `:latest` + `imagePullPolicy: Always`, so
-  each cluster can independently lag behind the pushed tag until someone bumps it -
-  see "Local dev loop" below).
+- **No promote-to-cluster mechanism** - `.github/workflows/infisical-secretstore-
+  operator-ci.yaml` (added 2026-08-26) builds and pushes `ghcr.io/jfillman/
+  infisical-secretstore-operator:dev` (mutable) and `:<shortsha>` (immutable,
+  unused today) automatically on every push to main that touches this operator, but
+  nothing updates any cluster's `deployment.yaml` or restarts the running pod - see
+  "CI / publishing" below for the manual step still required after a push.
 - **`INFISICAL_ORG_ID` is a required, manually-looked-up constant**, not derived at
   runtime - a JWT-claim-decode approach was tried first, confirmed live NOT to work
   (real bootstrap tokens carry no org claim at all) - see `main.py`'s `get_org_id()`
@@ -170,18 +168,18 @@ Deployments (kind-dev, kind-prod) needed the update - not scoped to
   created with - worth knowing if you see the 400 in logs, it's expected, not a sign
   something's wrong.
 
-## Local dev loop
+## CI / publishing
 
-```
-podman build -t ghcr.io/jfillman/infisical-secretstore-operator:dev .
-podman push ghcr.io/jfillman/infisical-secretstore-operator:dev
-```
+`.github/workflows/infisical-secretstore-operator-ci.yaml`: a `python -m py_compile`
+sanity check (no real test suite exists for this operator yet) on every PR touching
+`operators/infisical-secretstore-operator/**`, then on every push to main a build +
+push of both `ghcr.io/jfillman/infisical-secretstore-operator:dev` and
+`:<shortsha>` (the sha tag is unused today - not wired to any cluster's
+`deployment.yaml` - but there for a future rollback/promotion mechanism).
 
-`image:`/`imagePullPolicy: IfNotPresent` in each cluster repo's own
-`10-crds-operators/infisical-secretstore-operator/deployment.yaml` already points at
-this tag - no `kind load` needed anymore. But `:dev` is a mutable tag with
-`IfNotPresent`, so a plain `rollout restart` after a push does NOT guarantee a node
-already holding the old `:dev` layer pulls the new one - force it per cluster:
+Pushing a new `:dev` image does NOT update any running cluster - each cluster's
+`image:`/`imagePullPolicy: IfNotPresent` still points at the same mutable tag, so a
+running pod keeps its already-pulled layer until something forces a re-pull:
 
 ```
 kubectl --context kind-dev -n infisical rollout restart deployment/infisical-secretstore-operator
@@ -189,6 +187,19 @@ kubectl --context kind-prod -n infisical rollout restart deployment/infisical-se
 kubectl --context kind-man -n infisical rollout restart deployment/infisical-secretstore-operator
 ```
 
-If a cluster's node still serves the stale cached layer despite the restart, delete
-the pod directly to force a fresh pull, or bump the tag (this repo has no CI to do
-that for you yet - see "Known gaps" above).
+If a node still serves the stale cached layer despite the restart, delete the pod
+directly to force a fresh pull. A real promote-to-cluster mechanism (ArgoCD Image
+Updater or similar, replacing this manual restart) is future work - see "Known gaps"
+above.
+
+## Local dev loop (before pushing to main)
+
+```
+podman build -t ghcr.io/jfillman/infisical-secretstore-operator:dev .
+podman push ghcr.io/jfillman/infisical-secretstore-operator:dev
+```
+
+Same image/tag CI would eventually push - useful for testing a change against a real
+cluster before it's merged, without waiting on/triggering the CI pipeline. Requires
+already being logged in to `ghcr.io` locally (`podman login ghcr.io`) with push
+access to the `jfillman` org - CI does this itself via `secrets.GITHUB_TOKEN`.
