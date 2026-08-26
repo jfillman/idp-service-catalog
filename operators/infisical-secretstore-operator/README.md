@@ -148,11 +148,14 @@ Deployments (kind-dev, kind-prod) needed the update - not scoped to
 
 ## Known gaps (real, not hidden)
 
-- **No image registry / CI pipeline yet** - built locally, `kind load
-  image-archive`'d into BOTH kind-dev's and kind-prod's containerd directly (see
-  "Local dev loop" below). Not representative of a real deploy pipeline on either
-  cluster - each cluster's copy has to be rebuilt/reloaded by hand on every change,
-  a real, doubled version of the same gap the single-cluster build already had.
+- **Image is pushed to a registry now (`ghcr.io/jfillman/infisical-secretstore-
+  operator:dev`, since 2026-08-26 - a third cluster, kind-man, needed the image and
+  made the old `kind load`-per-cluster loop unworkable), but there's still no CI
+  pipeline** - a new build still means a manual `podman build && podman push`,
+  followed by hand-editing every cluster's `deployment.yaml` `image:` field (there's
+  no shared tag-tracking mechanism, e.g. `:latest` + `imagePullPolicy: Always`, so
+  each cluster can independently lag behind the pushed tag until someone bumps it -
+  see "Local dev loop" below).
 - **`INFISICAL_ORG_ID` is a required, manually-looked-up constant**, not derived at
   runtime - a JWT-claim-decode approach was tried first, confirmed live NOT to work
   (real bootstrap tokens carry no org claim at all) - see `main.py`'s `get_org_id()`
@@ -167,16 +170,25 @@ Deployments (kind-dev, kind-prod) needed the update - not scoped to
   created with - worth knowing if you see the 400 in logs, it's expected, not a sign
   something's wrong.
 
-## Local dev loop (no registry yet)
+## Local dev loop
 
 ```
-podman build -t infisical-secretstore-operator:dev .
-podman save localhost/infisical-secretstore-operator:dev -o /tmp/op.tar
-# kind-dev's own copy:
-kind load image-archive /tmp/op.tar --name dev
-kubectl --context kind-dev -n infisical rollout restart deployment/infisical-secretstore-operator
-# kind-prod's copy too, if the change affects it (it does, unless the change is
-# purely inside configure_kubernetes_auth() - kind-prod never calls that function):
-kind load image-archive /tmp/op.tar --name prod
-kubectl --context kind-prod -n infisical rollout restart deployment/infisical-secretstore-operator
+podman build -t ghcr.io/jfillman/infisical-secretstore-operator:dev .
+podman push ghcr.io/jfillman/infisical-secretstore-operator:dev
 ```
+
+`image:`/`imagePullPolicy: IfNotPresent` in each cluster repo's own
+`10-crds-operators/infisical-secretstore-operator/deployment.yaml` already points at
+this tag - no `kind load` needed anymore. But `:dev` is a mutable tag with
+`IfNotPresent`, so a plain `rollout restart` after a push does NOT guarantee a node
+already holding the old `:dev` layer pulls the new one - force it per cluster:
+
+```
+kubectl --context kind-dev -n infisical rollout restart deployment/infisical-secretstore-operator
+kubectl --context kind-prod -n infisical rollout restart deployment/infisical-secretstore-operator
+kubectl --context kind-man -n infisical rollout restart deployment/infisical-secretstore-operator
+```
+
+If a cluster's node still serves the stale cached layer despite the restart, delete
+the pod directly to force a fresh pull, or bump the tag (this repo has no CI to do
+that for you yet - see "Known gaps" above).
