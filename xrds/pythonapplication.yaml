@@ -20,6 +20,9 @@ apiVersion: apiextensions.crossplane.io/v2
 kind: CompositeResourceDefinition
 metadata:
   name: pythonapplications.catalog.idp.io
+  annotations:
+    terasky.backstage.io/add-to-catalog: "true"
+    terasky.backstage.io/target-path: "tenants/${{ parameters.xrName }}/xr-requests/pythonapplication.yaml"
 spec:
   group: catalog.idp.io
   names:
