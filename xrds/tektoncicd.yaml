@@ -98,4 +98,21 @@ spec:
                     succeeding - see compositions/tektoncicd/templates/
                     00-devcluster-gate.yaml.
                   minLength: 1
+                extraGitopsRepos:
+                  type: array
+                  description: >-
+                    Full URLs of extra gitops repos (beyond gitops-<appName>) this
+                    app's CI needs write access to - platform-cicd's
+                    gitops-image-bump stage for an app whose deploy target isn't
+                    its own gitops-<appName> repo (e.g. a hand-deployed singleton
+                    writing into a shared gitops-cluster-* repo). Rendered into
+                    identity.yaml's platformIdentity.extraGitopsRepos (see
+                    platform-cicd-app's repository.yaml) as an extra Repository CR
+                    grant - deliberately a declared XR spec field, not a
+                    hand-edited identity.yaml, since this resource's
+                    managementPolicies (Create/Update) reconcile that file back to
+                    exactly what this Composition renders on every drift.
+                  items:
+                    type: string
+                  default: []
           required: ["spec"]

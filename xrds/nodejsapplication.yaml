@@ -119,5 +119,16 @@ spec:
                   description: GitHub visibility for both the src and gitops repos.
                   enum: [private, public]
                   default: private
+                extraGitopsRepos:
+                  type: array
+                  description: >-
+                    Passed straight through to the composed TektonCICD child's own
+                    spec.extraGitopsRepos - see xrds/tektoncicd.yaml for what this
+                    grants and why. Only needed by an app whose deploy target isn't
+                    its own gitops-<appName> repo (e.g. Backstage, hand-deployed to
+                    a shared gitops-cluster-* repo) - most apps never set this.
+                  items:
+                    type: string
+                  default: []
               required: ["devCluster"]
           required: ["spec"]

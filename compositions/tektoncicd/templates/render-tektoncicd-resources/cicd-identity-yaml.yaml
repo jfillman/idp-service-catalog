@@ -48,5 +48,11 @@ spec:
         appRepoUrl: <<$spec.appRepoUrl>>
         githubOwner: <<$platformOwner>>
         catalogNamespace: platform-catalog
+      <<- if $spec.extraGitopsRepos >>
+        extraGitopsRepos:
+        <<- range $spec.extraGitopsRepos >>
+          - <<.>>
+        <<- end >>
+      <<- end >>
     commitMessage: <<printf "Onboard %s: add tenants/%s/identity.yaml for CICD pipeline onboarding" $xrName $xrName | toJson>>
 <<- end >>
