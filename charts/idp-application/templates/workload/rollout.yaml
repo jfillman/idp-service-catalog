@@ -97,8 +97,20 @@ spec:
   strategy:
     {{- if eq .Values.rollout.strategy "blueGreen" }}
     blueGreen:
+      {{- /* activeService/previewService are NOT part of the rollout.blueGreen
+      escape hatch below - service.yaml renders exactly these two fixed names
+      ({{appName}} / {{appName}}-preview, matching this chart's own selector
+      labels), so an overridden name here would reference a Service that doesn't
+      exist. Same "guard the chart-owned identity, escape-hatch the rest" idiom
+      as podSpec's containers guard above. */}}
+      {{- if and .Values.rollout.blueGreen (or (hasKey .Values.rollout.blueGreen "activeService") (hasKey .Values.rollout.blueGreen "previewService")) }}
+      {{- fail "rollout.blueGreen must not set activeService/previewService - service.yaml always renders {{appName}} and {{appName}}-preview, and the Rollout spec must reference those same fixed names. Use rollout.blueGreen for autoPromotionEnabled/scaleDownDelaySeconds/prePromotionAnalysis/postPromotionAnalysis/previewReplicaCount/antiAffinity instead." }}
+      {{- end }}
       activeService: {{ .Values.appName }}
       previewService: {{ .Values.appName }}-preview
+      {{- if .Values.rollout.blueGreen }}
+      {{- toYaml .Values.rollout.blueGreen | nindent 6 }}
+      {{- end }}
     {{- else }}
     canary:
       {{- if .Values.rollout.canaryAnalysis }}

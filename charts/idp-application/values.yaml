@@ -162,6 +162,19 @@ rollout:
     # ClusterAnalysisTemplate). Only rendered when canary strategy is active AND this
     # is non-empty - blueGreen has no analysis field at this level.
 
+  blueGreen: {} # NOT in §3's schema - same raw-passthrough idiom as canaryAnalysis
+    # above, for the blueGreen-side equivalent of canary's steps/canaryAnalysis
+    # complexity. Merged onto this chart's own activeService/previewService (fixed
+    # to {{appName}}/{{appName}}-preview, matching service.yaml - setting either
+    # key here fails the render, see rollout.yaml's own guard). Only rendered when
+    # strategy: blueGreen is active. Typical shape:
+    # {autoPromotionEnabled: false, scaleDownDelaySeconds: 30,
+    #  previewReplicaCount: 1, prePromotionAnalysis: {templates: [{templateName:
+    #  <name>}], args: [...]}, postPromotionAnalysis: {templates: [...], args:
+    #  [...]}, antiAffinity: {preferredDuringSchedulingIgnoredDuringExecution: {}}}
+    # - templateName references one of this release's own analysisTemplates:
+    # entries (or a platform-curated ClusterAnalysisTemplate), same as canary.
+
   # Curated, safe-default escape hatches - each toYaml'd straight into the main
   # container / pod template when set.
   command: []
