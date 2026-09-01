@@ -78,10 +78,15 @@ namespace:
 # failure, never a live API call in the other direction.
 #
 # Every field here is opaque to this chart - platform-cicd resolves/generates all
-# of it (relayUrl from its own cluster-registry ConfigMap, chainId/flowStartTime/
-# prCreatedAt from the release Pipeline's own tracing/PR-creation results) and
-# writes the whole block in the SAME commit as the rollout.image.* patch above, so
-# it's always current for whichever release is actually being synced.
+# of it (relayUrl from its own cluster-registry ConfigMap, chainId/flowStartTime
+# from the release Pipeline's own tracing results) and writes the whole block in
+# the SAME commit as the rollout.image.* patch above, so it's always current for
+# whichever release is actually being synced. pr-url/pr-created-at are NOT here -
+# unlike everything else in this block they can't be known at commit time (the
+# release PR doesn't exist yet), and writing them via a second commit once it did
+# used to re-trigger every governance gate on the gitops repo a second time on every
+# release (found 2026-08-31). platform-cicd resolves them a different way instead -
+# see open-release-pr.yaml's own header.
 releaseTracking: null
 # relayUrl: http://10.89.0.2:30880/outcome/kind-prod  # platform-cicd's argocd-outcome-relay
 # cluster: kind-prod                      # must match the relayUrl's own /outcome/<cluster>
@@ -99,8 +104,6 @@ releaseTracking: null
 # gitRevision: ""
 # flowStartTime: ""
 # chainId: ""
-# prUrl: ""
-# prCreatedAt: ""
 # configJsonB64: ""
 
 # NOT in §3's schema block - added 2026-08-13 when the chart was built, per a v1

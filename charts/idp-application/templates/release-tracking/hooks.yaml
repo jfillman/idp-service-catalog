@@ -77,8 +77,6 @@ spec:
             - { name: GIT_REVISION, value: {{ $rt.gitRevision | default "" | quote }} }
             - { name: FLOW_START_TIME, value: {{ $rt.flowStartTime | default "" | quote }} }
             - { name: CHAIN_ID, value: {{ $rt.chainId | default "" | quote }} }
-            - { name: PR_URL, value: {{ $rt.prUrl | default "" | quote }} }
-            - { name: PR_CREATED_AT, value: {{ $rt.prCreatedAt | default "" | quote }} }
             - { name: CONFIG_JSON_B64, value: {{ $rt.configJsonB64 | default "" | quote }} }
 ---
 {{- end }}
