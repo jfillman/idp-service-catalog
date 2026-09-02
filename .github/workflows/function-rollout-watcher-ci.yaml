@@ -131,6 +131,9 @@ jobs:
     runs-on: ubuntu-24.04
     needs:
       - build
+    permissions:
+      contents: read
+      packages: write
     defaults:
       run:
         working-directory: functions/function-rollout-watcher
