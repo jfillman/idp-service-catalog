@@ -117,6 +117,28 @@ def ready_condition(message: str) -> list[dict]:
     }]
 
 
+def failed_condition(message: str) -> list[dict]:
+    # Counterpart to ready_condition() - without this, a PermanentError (see
+    # create_project()'s orphaned-slug case) stops kopf's own internal retry
+    # loop correctly, but leaves status.conditions/status.phase exactly as they
+    # were on the LAST successful reconcile (potentially days/weeks stale,
+    # confirmed live: a CR stuck failing every resume since 2026-08-23 still
+    # read status.phase: Ready, dated from its one real success that same day -
+    # no visible sign anything was wrong short of reading operator logs). The
+    # whole point of failing permanently instead of retrying silently forever is
+    # for a human to notice; `kubectl get infisicalproject` has to be able to
+    # show that, not just this operator's own logs.
+    return [{
+        "type": "Ready",
+        "status": "False",
+        "reason": "Failed",
+        "message": message,
+        "lastTransitionTime": datetime.datetime.now(datetime.timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }]
+
+
 def _req(method: str, path: str, not_found_ok: bool = False, **kwargs) -> dict | None:
     resp = _session.request(method, f"{INFISICAL_API_URL}{path}", timeout=15, **kwargs)
     if not_found_ok and resp.status_code == 404:
@@ -453,7 +475,13 @@ def reconcile(spec: dict, status: dict, meta: dict, namespace: str, name: str,
     project = find_project_by_slug(project_slug)
     if project is None:
         logger.info("Creating Infisical project %s (slug=%s)", project_name, project_slug)
-        project = create_project(project_name, project_slug)
+        try:
+            project = create_project(project_name, project_slug)
+        except kopf.PermanentError as e:
+            patch.status["phase"] = "Failed"
+            patch.status["message"] = str(e)
+            patch.status["conditions"] = failed_condition(str(e))
+            raise
     project_id = project["id"]
     patch.status["projectId"] = project_id
     patch.status["projectSlug"] = project["slug"]
