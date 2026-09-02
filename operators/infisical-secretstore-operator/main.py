@@ -146,8 +146,38 @@ def get_org_id() -> str:
     return ORG_ID_OVERRIDE
 
 
+def _list_all(path: str, key: str, params: dict | None = None) -> list[dict]:
+    """
+    GET-and-filter helpers below (find_project_by_slug, find_identity_by_name) have
+    no server-side name/slug filter to call - they list everything and match
+    client-side. Both list endpoints paginate at a default limit=20 (confirmed
+    against the real API contract, same standard every other endpoint here was
+    held to), so a single unpaginated GET silently stops seeing real matches once
+    the org holds more than 20 projects/identities. That's not hypothetical here:
+    this org accumulates orphaned Infisical-side projects across cluster
+    rebuilds (kopf's on_delete finalizer never runs on an abrupt `kind delete`,
+    only on a real CR deletion), and it's exactly the failure mode a live
+    reconcile loop hit - find_project_by_slug stops finding an already-created
+    project once the org passes 20, reconcile() calls create_project() again,
+    Infisical 400s on the duplicate slug, kopf retries in ~15s, forever. Paginate
+    through everything instead of trusting page 1 alone.
+    """
+    items: list[dict] = []
+    offset = 0
+    limit = 100  # API max - fewer round trips than the 20 default
+    params = dict(params or {})
+    while True:
+        params["offset"] = offset
+        params["limit"] = limit
+        batch = _req("GET", path, params=params).get(key, [])
+        items.extend(batch)
+        if len(batch) < limit:
+            return items
+        offset += limit
+
+
 def find_project_by_slug(slug: str) -> dict | None:
-    for project in _req("GET", "/api/v1/projects").get("projects", []):
+    for project in _list_all("/api/v1/projects", "projects"):
         if project["slug"] == slug:
             return project
     return None
@@ -184,7 +214,7 @@ def find_identity_by_name(org_id: str, name: str) -> dict | None:
     # endpoint - normalized to that same flat shape here so reconcile()'s
     # identity["id"]/identity["name"] usage works the same regardless of which path
     # produced it.
-    for row in _req("GET", "/api/v1/identities", params={"orgId": org_id}).get("identities", []):
+    for row in _list_all("/api/v1/identities", "identities", params={"orgId": org_id}):
         inner = row.get("identity", {})
         if inner.get("name") == name:
             return {"id": row["identityId"], "name": inner["name"]}
