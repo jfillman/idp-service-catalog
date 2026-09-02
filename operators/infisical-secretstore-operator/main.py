@@ -202,6 +202,29 @@ def find_project_by_slug(slug: str) -> dict | None:
     return None
 
 
+def get_project_by_id(project_id: str) -> dict | None:
+    """
+    Counterpart to find_project_by_slug's listing approach, and preferred over it
+    whenever a projectId is already known (see reconcile()) - confirmed live on
+    kind-prod that these two lookups are NOT equivalent: platform-cicd-kind-prod
+    and checkout-api-kind-prod each still have real secrets under them, still
+    read correctly by their own project-scoped machine identity (ESO's
+    ClusterSecretStore has been pulling from both the whole time, unaffected)
+    - genuinely live projects, not orphaned - yet neither one's id ever
+    appeared in a full paginated GET /api/v1/projects listing, while a direct
+    GET /api/v1/projects/{id} by that same known id is expected to resolve
+    them correctly (list vs. get-by-id scoping/visibility differs somewhere in
+    Infisical - never fully root-caused server-side, no admin-API access to
+    confirm the exact mechanism, but the *behavioral* difference is confirmed).
+    Trusting an already-known id here means reconcile() never again calls
+    create_project() for a project it already successfully created once -
+    exactly the fix: these projects hold real secrets and must never be
+    recreated, only re-verified.
+    """
+    resp = _req("GET", f"/api/v1/projects/{project_id}", not_found_ok=True)
+    return resp["project"] if resp else None
+
+
 def create_project(name: str, slug: str) -> dict:
     body = {
         "projectName": name,
@@ -472,7 +495,24 @@ def reconcile(spec: dict, status: dict, meta: dict, namespace: str, name: str,
         "blockOwnerDeletion": True,
     }
 
-    project = find_project_by_slug(project_slug)
+    # A known projectId from a past successful reconcile is checked by direct
+    # GET first, ahead of the slug-listing search below - see get_project_by_id()'s
+    # own docstring for why these two lookups are NOT interchangeable (confirmed
+    # live: a real, still-in-use project can be permanently absent from the
+    # listing while still resolving fine by id). Skips find_project_by_slug/
+    # create_project entirely once we've ever known this project's id - the
+    # important property being that a real, already-populated project (someone's
+    # actual secrets) never gets treated as missing and recreated.
+    known_project_id = status.get("projectId")
+    project = get_project_by_id(known_project_id) if known_project_id else None
+    if project is None and known_project_id:
+        logger.warning(
+            "InfisicalProject %s: previously-known projectId %s no longer resolves "
+            "by direct GET (genuinely gone, not just unlistable) - falling back to "
+            "slug lookup/create", name, known_project_id,
+        )
+    if project is None:
+        project = find_project_by_slug(project_slug)
     if project is None:
         logger.info("Creating Infisical project %s (slug=%s)", project_name, project_slug)
         try:
