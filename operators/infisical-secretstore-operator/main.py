@@ -177,7 +177,12 @@ def _list_all(path: str, key: str, params: dict | None = None) -> list[dict]:
 
 
 def find_project_by_slug(slug: str) -> dict | None:
-    for project in _list_all("/api/v1/projects", "projects"):
+    projects = _list_all("/api/v1/projects", "projects")
+    logging.info(
+        "find_project_by_slug(%r): listing returned %d projects: %s",
+        slug, len(projects), [(p.get("slug"), p.get("id")) for p in projects],
+    )
+    for project in projects:
         if project["slug"] == slug:
             return project
     return None
