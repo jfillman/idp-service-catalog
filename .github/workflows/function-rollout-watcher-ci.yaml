@@ -1,0 +1,160 @@
+name: function-rollout-watcher-ci
+
+# This function's own functions/function-rollout-watcher/.github/workflows/ci.yml
+# (vendored from the Crossplane function-template-python scaffold, which assumes
+# the function is its OWN top-level repo) has never actually run - GitHub Actions
+# only discovers workflow files under the REPO ROOT's .github/workflows/, and this
+# function lives as a subdirectory of the idp-service-catalog monorepo. Confirmed
+# live 2026-09-02: `gh run list` for that nested path 404s ("workflow ... not found
+# on the default branch"), and the currently-installed package
+# (ghcr.io/jfillman/function-rollout-watcher:v0.2.4) is a genuine single-platform
+# manifest (application/vnd.docker.distribution.manifest.v2+json, no per-platform
+# entries) - it was built and pushed by hand on an amd64 machine at some point, the
+# same "no real CI" gap infisical-secretstore-operator-ci.yaml (this directory)
+# closed for that operator on 2026-08-26. Runs on kiac-dev's arm64 nodes with the
+# same "exec format error" crash that fix addressed.
+#
+# This is a real top-level workflow that does the same amd64+arm64 matrix build +
+# multi-platform xpkg push the nested ci.yml already correctly describes, just
+# wired to actually run: every context/working-directory below is repointed at
+# functions/function-rollout-watcher (the checkout is still the whole repo), and
+# path filters scope it to this function only so it doesn't fire on unrelated
+# changes elsewhere in the monorepo.
+#
+# XPKG_VERSION is left for workflow_dispatch to set explicitly (matching this
+# function's existing v0.2.x tag scheme) - a plain push falls back to the
+# pseudo-version default already in this logic (v0.0.0-<commit-date>-<shortsha>),
+# same as the nested file always intended.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "functions/function-rollout-watcher/**"
+      - ".github/workflows/function-rollout-watcher-ci.yaml"
+  pull_request:
+    paths:
+      - "functions/function-rollout-watcher/**"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version (e.g. v0.2.5)
+        required: false
+
+env:
+  FUNCTION_DIR: functions/function-rollout-watcher
+  PYTHON_VERSION: '3.13'
+  HATCH_VERSION: '1.16.5'
+  DOCKER_BUILDX_VERSION: 'v0.24.0'
+  XP_CHANNEL: stable
+  XP_VERSION: v2.3.0
+  XPKG: ghcr.io/jfillman/function-rollout-watcher
+  XPKG_VERSION: ${{ inputs.version }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: functions/function-rollout-watcher
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pipx install hatch==${{ env.HATCH_VERSION }}
+      - run: hatch fmt
+
+  unit-test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: functions/function-rollout-watcher
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pipx install hatch==${{ env.HATCH_VERSION }}
+      - run: hatch test --all --randomize
+
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        arch:
+          - amd64
+          - arm64
+    steps:
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: all
+
+      - uses: docker/setup-buildx-action@v4
+        with:
+          version: ${{ env.DOCKER_BUILDX_VERSION }}
+
+      - uses: actions/checkout@v7
+
+      - name: Build Runtime
+        id: image
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ env.FUNCTION_DIR }}
+          platforms: linux/${{ matrix.arch }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          target: image
+          build-args:
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+          outputs: type=docker,dest=${{ env.FUNCTION_DIR }}/runtime-${{ matrix.arch }}.tar
+
+      - name: Setup the Crossplane CLI
+        working-directory: ${{ env.FUNCTION_DIR }}
+        run: "curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh"
+
+      - name: Build Package
+        working-directory: ${{ env.FUNCTION_DIR }}
+        run: ./crossplane xpkg build --package-file=${{ matrix.arch }}.xpkg --package-root=package/ --embed-runtime-image-tarball=runtime-${{ matrix.arch }}.tar
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-${{ matrix.arch }}
+          path: "${{ env.FUNCTION_DIR }}/*.xpkg"
+          if-no-files-found: error
+          retention-days: 1
+
+  push:
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    needs:
+      - build
+    defaults:
+      run:
+        working-directory: functions/function-rollout-watcher
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "!*.dockerbuild"
+          path: functions/function-rollout-watcher
+          merge-multiple: true
+
+      - name: Setup the Crossplane CLI
+        run: "curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh"
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set Default Multi-Platform Package Version
+        if: env.XPKG_VERSION == ''
+        run: echo "XPKG_VERSION=v0.0.0-$(date -d@$(git show -s --format=%ct) +%Y%m%d%H%M%S)-$(git rev-parse --short=12 HEAD)" >> $GITHUB_ENV
+
+      - name: Push Multi-Platform Package to GitHub Container Registry
+        run: "./crossplane --verbose xpkg push --package-files $(echo *.xpkg|tr ' ' ,) ${{ env.XPKG }}:${{ env.XPKG_VERSION }}"
