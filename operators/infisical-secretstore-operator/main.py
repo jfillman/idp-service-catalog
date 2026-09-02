@@ -152,14 +152,11 @@ def _list_all(path: str, key: str, params: dict | None = None) -> list[dict]:
     no server-side name/slug filter to call - they list everything and match
     client-side. Both list endpoints paginate at a default limit=20 (confirmed
     against the real API contract, same standard every other endpoint here was
-    held to), so a single unpaginated GET silently stops seeing real matches once
-    the org holds more than 20 projects/identities. That's not hypothetical here:
-    this org accumulates orphaned Infisical-side projects across cluster
-    rebuilds (kopf's on_delete finalizer never runs on an abrupt `kind delete`,
-    only on a real CR deletion), and it's exactly the failure mode a live
-    reconcile loop hit - find_project_by_slug stops finding an already-created
-    project once the org passes 20, reconcile() calls create_project() again,
-    Infisical 400s on the duplicate slug, kopf retries in ~15s, forever. Paginate
+    held to), so a single unpaginated GET would silently stop seeing real matches
+    once the org holds more than 20 projects/identities - a real latent bug on its
+    own even though it turned out NOT to be what caused the live kind-prod
+    reconcile loop (that org only has 12 projects; see create_project()'s own
+    comment for the actual root cause). Worth fixing regardless - paginate
     through everything instead of trusting page 1 alone.
     """
     items: list[dict] = []
@@ -177,12 +174,7 @@ def _list_all(path: str, key: str, params: dict | None = None) -> list[dict]:
 
 
 def find_project_by_slug(slug: str) -> dict | None:
-    projects = _list_all("/api/v1/projects", "projects")
-    logging.info(
-        "find_project_by_slug(%r): listing returned %d projects: %s",
-        slug, len(projects), [(p.get("slug"), p.get("id")) for p in projects],
-    )
-    for project in projects:
+    for project in _list_all("/api/v1/projects", "projects"):
         if project["slug"] == slug:
             return project
     return None
@@ -198,7 +190,40 @@ def create_project(name: str, slug: str) -> dict:
         # unused dead weight at best and a second, wrong scoping axis at worst.
         "shouldCreateDefaultEnvs": False,
     }
-    return _req("POST", "/api/v1/projects", json=body)["project"]
+    resp = _session.post(f"{INFISICAL_API_URL}/api/v1/projects", json=body, timeout=15)
+    if resp.status_code == 400 and "already exists in your organization" in resp.text:
+        # Real, live-diagnosed failure mode on kind-prod, not hypothetical: two
+        # InfisicalProjects (checkout-api-kind-prod, platform-cicd-kind-prod) each
+        # already had a real status.projectId from a past successful create, yet
+        # neither id appeared anywhere in find_project_by_slug's own full
+        # paginated listing (confirmed via a temporary diagnostic log - the
+        # listing came back with exactly 12 real projects, neither of these
+        # two's ids among them). The project still occupies its slug server-side
+        # (this POST 400s every time) but is permanently invisible to GET
+        # /api/v1/projects - consistent with an orphaned/soft-deleted row: most
+        # likely this operator's own on_delete() ran DELETE /api/v1/projects/{id}
+        # against a CR that later got recreated (new k8s uid, no memory of the
+        # old projectId), and Infisical's DELETE doesn't actually free the slug's
+        # uniqueness constraint even though it drops out of the list. No retry
+        # fixes this - kopf's default TemporaryError (15s forever) was the
+        # reconcile loop this whole diagnosis started from: 15,000+ retries over
+        # more than a week, every one of them doomed. Fail permanently instead,
+        # once, with an actionable message - a human has to either purge the
+        # orphaned project directly against Infisical or change this
+        # InfisicalProject's spec.slug to a fresh value.
+        raise kopf.PermanentError(
+            f"Cannot create Infisical project slug={slug!r}: rejected as a duplicate, "
+            f"but it does not appear in a full listing of every project in the org - "
+            f"almost certainly an orphaned/soft-deleted project occupying this slug "
+            f"server-side (see this function's own comment for the likely mechanism). "
+            f"Retrying will never succeed. Fix requires a human: purge the conflicting "
+            f"project directly in Infisical, or change spec.slug on this InfisicalProject."
+        )
+    if not resp.ok:
+        raise kopf.TemporaryError(
+            f"POST /api/v1/projects -> {resp.status_code}: {resp.text[:500]}", delay=15
+        )
+    return resp.json()["project"]
 
 
 def ensure_environment(project_id: str, slug: str) -> dict:
