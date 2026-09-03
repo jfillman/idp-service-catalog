@@ -25,6 +25,11 @@
 # `configMapGenerator: false` line - keeps identity.yaml's shape unchanged for every
 # env that hasn't opted in, matching the ApplicationSet's own `hasKey` gate (absent
 # key, not false value, is what "not opted in" means there).
+#
+# crossplane.io/external-name added, format "<repo>:<file>:" - same cluster-rebuild fix
+# as this composition's own cluster-identity-yaml.yaml (see that file's header): avoids
+# an unnecessary re-Create/re-commit of this platform-owned, self-healing file every
+# rebuild.
 <<- if $clusterOk >>
 apiVersion: repo.github.m.upbound.io/v1alpha1
 kind: RepositoryFile
@@ -32,6 +37,7 @@ metadata:
   name: <<$xrName>>-tenant-identity-yaml
   annotations:
     <<setResourceNameAnnotation "tenant-identity-yaml">>
+    crossplane.io/external-name: <<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/%s/identity.yaml" $appName $env)>>
 spec:
   providerConfigRef:
     kind: ClusterProviderConfig

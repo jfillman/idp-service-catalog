@@ -234,6 +234,12 @@ spec:
             # springBootVersion is a template literal, not a spec field - see the XRD's own header
             # for why (the platform, not each app, picks and centrally upgrades the framework
             # version).
+            #
+            # crossplane.io/external-name on every RepositoryFile below, format "<repo>:<file>:" -
+            # same fix as nodejsapplication's own src-repo.yaml, live-confirmed necessary: this exact
+            # composition's order-api had its version bump and its home() response reverted by a
+            # same-day cluster recreate (2026-09-02), the identical root cause as checkout-api's
+            # lost package.json edits.
             <<- $xrName := .observed.composite.resource.metadata.name >>
             <<- $spec := .observed.composite.resource.spec >>
             <<- $description := $spec.description | default (printf "%s - a Spring Boot application" $xrName) >>
@@ -279,6 +285,7 @@ spec:
               name: <<$xrName>>-src-build-gradle
               annotations:
                 <<setResourceNameAnnotation "src-repo-build-file">>
+                crossplane.io/external-name: <<printf "%s:build.gradle:" $xrName>>
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -320,6 +327,7 @@ spec:
               name: <<$xrName>>-src-pom-xml
               annotations:
                 <<setResourceNameAnnotation "src-repo-build-file">>
+                crossplane.io/external-name: <<printf "%s:pom.xml:" $xrName>>
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -381,6 +389,7 @@ spec:
               name: <<$xrName>>-src-application-java
               annotations:
                 <<setResourceNameAnnotation "src-repo-application-java">>
+                crossplane.io/external-name: <<printf "%s:%s:" $xrName (printf "src/main/java/%s/Application.java" $packagePath)>>
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -419,6 +428,7 @@ spec:
               name: <<$xrName>>-src-application-properties
               annotations:
                 <<setResourceNameAnnotation "src-repo-application-properties">>
+                crossplane.io/external-name: <<printf "%s:src/main/resources/application.properties:" $xrName>>
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -440,6 +450,7 @@ spec:
               name: <<$xrName>>-src-dockerfile
               annotations:
                 <<setResourceNameAnnotation "src-repo-dockerfile">>
+                crossplane.io/external-name: <<printf "%s:Dockerfile:" $xrName>>
               # Multi-stage: build stage carries a full JDK plus the build tool (installed via apk,
               # no bundled wrapper script - deliberately narrower than Maven/Gradle wrapper scaffolding,
               # matching this catalog's "deliberately narrow" scope elsewhere), final stage is a bare
@@ -490,6 +501,7 @@ spec:
               name: <<$xrName>>-src-gitignore
               annotations:
                 <<setResourceNameAnnotation "src-repo-gitignore">>
+                crossplane.io/external-name: <<printf "%s:.gitignore:" $xrName>>
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -516,6 +528,7 @@ spec:
               name: <<$xrName>>-src-readme
               annotations:
                 <<setResourceNameAnnotation "src-repo-readme">>
+                crossplane.io/external-name: <<printf "%s:README.md:" $xrName>>
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:

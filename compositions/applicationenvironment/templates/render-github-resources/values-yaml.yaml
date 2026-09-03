@@ -29,6 +29,15 @@
 # since it lives in a different Composition. Deliberately different from THIS
 # Composition's own cluster-identity-yaml.yaml, which keeps full management (including
 # Update) because nothing but the Composition should ever touch that one.
+#
+# crossplane.io/external-name added, format "<repo>:<file>:" - same class of bug as the
+# 2026-08-18 Update-policy fix above, hit again live 2026-09-02 via a different trigger:
+# a cluster rebuild wipes Crossplane's state but not GitHub's, so this MR comes back with
+# no external-name, defaults to Create, and overwriteOnCreate: true silently overwrites
+# a real developer/CI-edited values.yaml (image tag, rollout config) with the bootstrap
+# rollout: null again. This is the highest-stakes file in the whole catalog to get this
+# wrong - it's what's actually deployed. Setting external-name makes the MR adopt the
+# existing file on rebuild instead of re-Creating over it.
 <<- if $clusterOk >>
 apiVersion: repo.github.m.upbound.io/v1alpha1
 kind: RepositoryFile
@@ -36,6 +45,7 @@ metadata:
   name: <<$xrName>>-values-yaml
   annotations:
     <<setResourceNameAnnotation "values-yaml">>
+    crossplane.io/external-name: <<printf "%s:%s:" (printf "gitops-%s" $appName) (printf "%s/%s/values.yaml" $cluster $env)>>
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:

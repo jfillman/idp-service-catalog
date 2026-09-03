@@ -167,6 +167,12 @@ spec:
             # $modulePath: github.com/<platformOwner>/<xrName>, matching the real repo URL - see
             # xrds/goapplication.yaml's own header for why this is a computed literal, not a
             # spec field.
+            #
+            # crossplane.io/external-name on every RepositoryFile below, format "<repo>:<file>:" -
+            # same fix as nodejsapplication's own src-repo.yaml: a cluster rebuild wipes Crossplane's
+            # state but not GitHub's, so a stateless RepositoryFile MR defaults to Create, and
+            # overwriteOnCreate: true means Create silently overwrites real committed developer
+            # edits. Fixed here preemptively, same as pythonapplication's own src-repo.yaml.
             <<- $xrName := .observed.composite.resource.metadata.name >>
             <<- $spec := .observed.composite.resource.spec >>
             <<- $description := $spec.description | default (printf "%s - a Go application" $xrName) >>
@@ -205,6 +211,7 @@ spec:
               name: <<$xrName>>-src-go-mod
               annotations:
                 <<setResourceNameAnnotation "src-repo-go-mod">>
+                crossplane.io/external-name: <<printf "%s:go.mod:" $xrName>>
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -226,6 +233,7 @@ spec:
               name: <<$xrName>>-src-main-go
               annotations:
                 <<setResourceNameAnnotation "src-repo-main-go">>
+                crossplane.io/external-name: <<printf "%s:main.go:" $xrName>>
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -271,6 +279,7 @@ spec:
               name: <<$xrName>>-src-dockerfile
               annotations:
                 <<setResourceNameAnnotation "src-repo-dockerfile">>
+                crossplane.io/external-name: <<printf "%s:Dockerfile:" $xrName>>
               # Multi-stage, matching springbootapplication's own precedent (a real difference
               # from nodejsapplication's single-stage script, not just a style choice): build
               # stage carries the full Go toolchain, final stage is bare Alpine running only the
@@ -309,6 +318,7 @@ spec:
               name: <<$xrName>>-src-gitignore
               annotations:
                 <<setResourceNameAnnotation "src-repo-gitignore">>
+                crossplane.io/external-name: <<printf "%s:.gitignore:" $xrName>>
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -330,6 +340,7 @@ spec:
               name: <<$xrName>>-src-readme
               annotations:
                 <<setResourceNameAnnotation "src-repo-readme">>
+                crossplane.io/external-name: <<printf "%s:README.md:" $xrName>>
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:

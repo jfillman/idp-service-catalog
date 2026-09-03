@@ -64,6 +64,14 @@
 # come from 00-cluster-gate.yaml - see that file's header. gitopsRepoUrl/appRepoUrl
 # are bare (no .git suffix) there now, not just here - see this catalog's own
 # cicd-identity-yaml.yaml header for why that convention won, system-wide.
+#
+# crossplane.io/external-name added, format "<repo>:<file>:" - same class of bug as
+# nodejsapplication's own src-repo.yaml RepositoryFiles (a cluster rebuild wipes
+# Crossplane's state but not GitHub's, so a stateless MR defaults to Create). Lower
+# stakes here since content is deterministic and "Update" is already in this resource's
+# own managementPolicies (it self-heals either way), but a fresh Create still means an
+# unnecessary re-commit every rebuild, and consistent adopt-not-recreate behavior beats
+# relying on Update to paper over it.
 <<- if $clusterOk >>
 apiVersion: repo.github.m.upbound.io/v1alpha1
 kind: RepositoryFile
@@ -71,6 +79,7 @@ metadata:
   name: <<$xrName>>-cluster-identity-yaml
   annotations:
     <<setResourceNameAnnotation "cluster-identity-yaml">>
+    crossplane.io/external-name: <<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/identity.yaml" $appName)>>
 spec:
   managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
   providerConfigRef:

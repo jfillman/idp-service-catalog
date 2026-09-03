@@ -23,6 +23,11 @@
 # cluster-identity-yaml.yaml precedent) - this resource takes over an
 # already-existing external file on the devCluster migration's second landing;
 # nothing here should ever delete tenants/<app>/identity.yaml on GitHub.
+#
+# crossplane.io/external-name added, format "<repo>:<file>:" - same cluster-rebuild fix
+# as applicationenvironment's own cluster-identity-yaml.yaml (identical resource shape,
+# same reasoning: avoids an unnecessary re-Create/re-commit of this self-healing,
+# platform-owned file every rebuild).
 <<- $platformOwner := "jfillman" >>
 <<- if $clusterOk >>
 apiVersion: repo.github.m.upbound.io/v1alpha1
@@ -31,6 +36,7 @@ metadata:
   name: <<$xrName>>-cicd-identity-yaml
   annotations:
     <<setResourceNameAnnotation "cicd-identity-yaml">>
+    crossplane.io/external-name: <<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/identity.yaml" $xrName)>>
 spec:
   managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
   providerConfigRef:

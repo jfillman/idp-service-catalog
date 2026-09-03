@@ -23,6 +23,14 @@
 # framework) - same minimalism NodeJSApplication's own boilerplate keeps (raw
 # `http` module, no express) rather than picking a Python web framework on every
 # app's behalf.
+#
+# crossplane.io/external-name on every RepositoryFile below, format "<repo>:<file>:" -
+# same fix as nodejsapplication's own src-repo.yaml, and for the identical reason: a
+# cluster rebuild wipes Crossplane's state but not GitHub's, so a stateless RepositoryFile
+# MR defaults to Create, and overwriteOnCreate: true means Create silently overwrites
+# real committed developer edits. Hadn't hit this composition live yet, but the checkout-api
+# incident (nodejsapplication) that exposed it applies identically here - fixed
+# preemptively rather than waiting for a PythonApplication rebuild to hit it too.
 <<- $xrName := .observed.composite.resource.metadata.name >>
 <<- $spec := .observed.composite.resource.spec >>
 <<- $description := $spec.description | default (printf "%s - a Python application" $xrName) >>
@@ -67,6 +75,7 @@ metadata:
   name: <<$xrName>>-src-requirements-txt
   annotations:
     <<setResourceNameAnnotation "src-repo-dependency-file">>
+    crossplane.io/external-name: <<printf "%s:requirements.txt:" $xrName>>
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
@@ -86,6 +95,7 @@ metadata:
   name: <<$xrName>>-src-pyproject-toml
   annotations:
     <<setResourceNameAnnotation "src-repo-dependency-file">>
+    crossplane.io/external-name: <<printf "%s:pyproject.toml:" $xrName>>
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
@@ -111,6 +121,7 @@ metadata:
   name: <<$xrName>>-src-main-py
   annotations:
     <<setResourceNameAnnotation "src-repo-main-py">>
+    crossplane.io/external-name: <<printf "%s:main.py:" $xrName>>
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
@@ -154,6 +165,7 @@ metadata:
   name: <<$xrName>>-src-dockerfile
   annotations:
     <<setResourceNameAnnotation "src-repo-dockerfile">>
+    crossplane.io/external-name: <<printf "%s:Dockerfile:" $xrName>>
   # `apt-get upgrade` picks up already-published Debian package patches, same
   # patch-freshness reasoning as nodejsapplication's/springbootapplication's own
   # Dockerfiles. python:<version>-slim, not -alpine - avoids musl/manylinux wheel
@@ -189,6 +201,7 @@ metadata:
   name: <<$xrName>>-src-gitignore
   annotations:
     <<setResourceNameAnnotation "src-repo-gitignore">>
+    crossplane.io/external-name: <<printf "%s:.gitignore:" $xrName>>
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
@@ -211,6 +224,7 @@ metadata:
   name: <<$xrName>>-src-readme
   annotations:
     <<setResourceNameAnnotation "src-repo-readme">>
+    crossplane.io/external-name: <<printf "%s:README.md:" $xrName>>
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
