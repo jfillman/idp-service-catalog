@@ -18,6 +18,15 @@ metadata:
   labels:
     {{- include "idp-application.labels" . | nindent 4 }}
     platform.io/subcomponent: attached-rollout-watch
+  annotations:
+    # Backstage catalog taxonomy (idp/docs/backstage-design.md "Catalog ingestion") -
+    # "platform", matching the Kyverno-applied value every other auto-derived XRD gets
+    # (gitops-cluster-dev/30-policy/kyverno-policies/
+    # backstage-component-type-annotations.yaml). Set directly here, not via Kyverno,
+    # because this is the one XRD whose instances come from this chart rather than a
+    # GitOps xr-requests commit, and the one that also needs to work on kiac-prod,
+    # which has no Kyverno installed (confirmed live).
+    terasky.backstage.io/component-type: platform
 spec:
   environmentRef:
     name: {{ include "idp-application.environmentRef" . }}
