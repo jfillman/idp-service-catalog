@@ -88,7 +88,16 @@ namespace:
 # release (found 2026-08-31). platform-cicd resolves them a different way instead -
 # see open-release-pr.yaml's own header.
 releaseTracking: null
-# relayUrl: http://10.89.0.2:30880/outcome/kind-prod  # platform-cicd's argocd-outcome-relay
+# relayUrl: http://dev.kiac.local:30880/outcome/kind-prod  # platform-cicd's argocd-outcome-relay
+# relayHostAliasIP: ""                    # dev-cluster control-plane IP, baked into the hook
+#                                          # Job's hostAliases (idp/docs/local-clusters.md - a
+#                                          # pod's CoreDNS never sees the host's /etc/hosts, so
+#                                          # relayUrl's *.kiac.local hostname is unresolvable
+#                                          # in-cluster without this). open-release-pr.yaml
+#                                          # resolves it fresh, per release, via its own Task
+#                                          # pod's downward-API hostIP - it runs on the dev
+#                                          # cluster itself. Leave unset only for a relayUrl
+#                                          # that's a bare IP already (no hostname to alias).
 # cluster: kind-prod                      # must match the relayUrl's own /outcome/<cluster>
 #                                          # suffix - the hook script embeds this into the
 #                                          # CDEvent it builds, and argocd-outcome-relay

@@ -30,6 +30,17 @@ to authenticate-and-forward, so it needs this script to hand it a complete,
 ready-to-relay event. See platform-cicd/catalog/lib/argocd-outcome-hook.sh's own
 header and platform-cicd/docs/admin/multi-cluster.md for the full reasoning.
 
+hostAliases (added 2026-09-04): relayUrl's hostname (dev.kiac.local) is unresolvable
+from inside this Job's pod - a pod's CoreDNS forwards straight to /etc/resolv.conf,
+it never sees the host machine's /etc/hosts, so kiac-prod's post-sync Jobs got
+"Could not resolve host" here even after /etc/hosts itself was fixed. Same root
+cause and same fix shape as Backstage's Deployment and external-secrets'
+Application on kiac-man/kiac-prod - see idp/docs/local-clusters.md. The hostname is
+hardcoded to dev.kiac.local (the only cross-cluster relay host today) rather than
+parsed out of relayUrl, matching how those other two manifests hardcode their
+hostAliases entries too. Only rendered when relayHostAliasIP is set, so a
+bare-IP relayUrl (no hostname to alias) still renders a valid Job.
+
 Deliberately NOT using idp-application.serviceAccountName / the shared app
 ServiceAccount (rbac.yaml, this same directory, provisions platform-outcome-hook
 instead) - this is its own narrowly-scoped identity (get on exactly one Secret),
@@ -59,6 +70,12 @@ spec:
     spec:
       serviceAccountName: platform-outcome-hook
       restartPolicy: Never
+      {{- if $rt.relayHostAliasIP }}
+      hostAliases:
+        - ip: {{ $rt.relayHostAliasIP | quote }}
+          hostnames:
+            - dev.kiac.local
+      {{- end }}
       containers:
         - name: notify
           image: ghcr.io/jfillman/platform-cicd-toolbox:latest
