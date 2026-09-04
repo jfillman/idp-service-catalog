@@ -118,6 +118,16 @@ spec:
             # as applicationenvironment's own cluster-identity-yaml.yaml (identical resource shape,
             # same reasoning: avoids an unnecessary re-Create/re-commit of this self-healing,
             # platform-owned file every rebuild).
+            #
+            # That external-name value below is double-quoted (fixed 2026-09-04) - the unquoted
+            # "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML (a plain scalar
+            # can't end a line on ":", the decoder reads it as opening a nested mapping). Real live
+            # bug, same class as springbootapplication/nodejsapplication/goapplication/
+            # pythonapplication/applicationenvironment's own copies of this pattern (see
+            # springbootapplication's src-repo.yaml for the full writeup) - missed in that pass
+            # because this composition's render step is named render-tektoncicd-resources, not
+            # render-github-resources, so the grep sweep that found the others didn't match this
+            # directory. Every TektonCICD XR on kiac-dev was Synced: False from this.
             <<- $platformOwner := "jfillman" >>
             <<- if $clusterOk >>
             apiVersion: repo.github.m.upbound.io/v1alpha1
@@ -126,7 +136,7 @@ spec:
               name: <<$xrName>>-cicd-identity-yaml
               annotations:
                 <<setResourceNameAnnotation "cicd-identity-yaml">>
-                crossplane.io/external-name: <<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/identity.yaml" $xrName)>>
+                crossplane.io/external-name: "<<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/identity.yaml" $xrName)>>"
             spec:
               managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
               providerConfigRef:
