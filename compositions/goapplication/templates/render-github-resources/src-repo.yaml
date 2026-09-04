@@ -9,6 +9,11 @@
 # crossplane.io/external-name on the Repository below - same live-bug fix as
 # nodejsapplication's own src-repo.yaml.
 #
+# Every external-name value below is double-quoted (fixed 2026-09-04) - the unquoted
+# "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML. Real, fleet-wide
+# live bug (every app on kiac-dev was Synced: False from this) - see
+# springbootapplication's own copy of this file for the full writeup.
+#
 # managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"] (no "Update")
 # on every RepositoryFile below - same reasoning as nodejsapplication's own scaffold
 # files: real app source a developer is expected to edit immediately after
@@ -64,7 +69,7 @@ metadata:
   name: <<$xrName>>-src-go-mod
   annotations:
     <<setResourceNameAnnotation "src-repo-go-mod">>
-    crossplane.io/external-name: <<printf "%s:go.mod:" $xrName>>
+    crossplane.io/external-name: "<<printf "%s:go.mod:" $xrName>>"
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
@@ -86,7 +91,7 @@ metadata:
   name: <<$xrName>>-src-main-go
   annotations:
     <<setResourceNameAnnotation "src-repo-main-go">>
-    crossplane.io/external-name: <<printf "%s:main.go:" $xrName>>
+    crossplane.io/external-name: "<<printf "%s:main.go:" $xrName>>"
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
@@ -132,7 +137,7 @@ metadata:
   name: <<$xrName>>-src-dockerfile
   annotations:
     <<setResourceNameAnnotation "src-repo-dockerfile">>
-    crossplane.io/external-name: <<printf "%s:Dockerfile:" $xrName>>
+    crossplane.io/external-name: "<<printf "%s:Dockerfile:" $xrName>>"
   # Multi-stage, matching springbootapplication's own precedent (a real difference
   # from nodejsapplication's single-stage script, not just a style choice): build
   # stage carries the full Go toolchain, final stage is bare Alpine running only the
@@ -171,7 +176,7 @@ metadata:
   name: <<$xrName>>-src-gitignore
   annotations:
     <<setResourceNameAnnotation "src-repo-gitignore">>
-    crossplane.io/external-name: <<printf "%s:.gitignore:" $xrName>>
+    crossplane.io/external-name: "<<printf "%s:.gitignore:" $xrName>>"
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
@@ -193,7 +198,7 @@ metadata:
   name: <<$xrName>>-src-readme
   annotations:
     <<setResourceNameAnnotation "src-repo-readme">>
-    crossplane.io/external-name: <<printf "%s:README.md:" $xrName>>
+    crossplane.io/external-name: "<<printf "%s:README.md:" $xrName>>"
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:

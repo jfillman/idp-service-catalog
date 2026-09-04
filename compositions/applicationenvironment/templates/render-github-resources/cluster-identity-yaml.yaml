@@ -10,6 +10,10 @@
 # catalog's general "redundant-but-harmless idempotent writes over a matrix
 # generator" convention).
 #
+# That external-name value below is double-quoted (fixed 2026-09-04) - the unquoted
+# "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML. Real, fleet-wide
+# live bug - see springbootapplication's own src-repo.yaml for the full writeup.
+#
 # Renamed from cluster-app-yaml.yaml, content reshaped from flat app.yaml fields to
 # the nested platformIdentity: schema (2026-08-18) - the two files this catalog wrote
 # per app were "almost identical, one a subset of the other," sitting side by side in
@@ -79,7 +83,7 @@ metadata:
   name: <<$xrName>>-cluster-identity-yaml
   annotations:
     <<setResourceNameAnnotation "cluster-identity-yaml">>
-    crossplane.io/external-name: <<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/identity.yaml" $appName)>>
+    crossplane.io/external-name: "<<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/identity.yaml" $appName)>>"
 spec:
   managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
   providerConfigRef:

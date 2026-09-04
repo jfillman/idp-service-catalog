@@ -182,6 +182,11 @@ spec:
             # GitHub and 422s; setting external-name up front makes the MR import/adopt the
             # existing repo instead).
             #
+            # Every external-name value below is double-quoted (fixed 2026-09-04) - the unquoted
+            # "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML. Real, fleet-wide
+            # live bug (every app on kiac-dev was Synced: False from this) - see
+            # springbootapplication's own copy of this file for the full writeup.
+            #
             # managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"] (no "Update")
             # on every RepositoryFile below - same reasoning as nodejsapplication's own scaffold
             # files: this is real app source a developer is expected to edit immediately after
@@ -245,7 +250,7 @@ spec:
               name: <<$xrName>>-src-requirements-txt
               annotations:
                 <<setResourceNameAnnotation "src-repo-dependency-file">>
-                crossplane.io/external-name: <<printf "%s:requirements.txt:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:requirements.txt:" $xrName>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -265,7 +270,7 @@ spec:
               name: <<$xrName>>-src-pyproject-toml
               annotations:
                 <<setResourceNameAnnotation "src-repo-dependency-file">>
-                crossplane.io/external-name: <<printf "%s:pyproject.toml:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:pyproject.toml:" $xrName>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -291,7 +296,7 @@ spec:
               name: <<$xrName>>-src-main-py
               annotations:
                 <<setResourceNameAnnotation "src-repo-main-py">>
-                crossplane.io/external-name: <<printf "%s:main.py:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:main.py:" $xrName>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -335,7 +340,7 @@ spec:
               name: <<$xrName>>-src-dockerfile
               annotations:
                 <<setResourceNameAnnotation "src-repo-dockerfile">>
-                crossplane.io/external-name: <<printf "%s:Dockerfile:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:Dockerfile:" $xrName>>"
               # `apt-get upgrade` picks up already-published Debian package patches, same
               # patch-freshness reasoning as nodejsapplication's/springbootapplication's own
               # Dockerfiles. python:<version>-slim, not -alpine - avoids musl/manylinux wheel
@@ -371,7 +376,7 @@ spec:
               name: <<$xrName>>-src-gitignore
               annotations:
                 <<setResourceNameAnnotation "src-repo-gitignore">>
-                crossplane.io/external-name: <<printf "%s:.gitignore:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:.gitignore:" $xrName>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -394,7 +399,7 @@ spec:
               name: <<$xrName>>-src-readme
               annotations:
                 <<setResourceNameAnnotation "src-repo-readme">>
-                crossplane.io/external-name: <<printf "%s:README.md:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:README.md:" $xrName>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:

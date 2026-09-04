@@ -278,6 +278,10 @@ spec:
             # catalog's general "redundant-but-harmless idempotent writes over a matrix
             # generator" convention).
             #
+            # That external-name value below is double-quoted (fixed 2026-09-04) - the unquoted
+            # "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML. Real, fleet-wide
+            # live bug - see springbootapplication's own src-repo.yaml for the full writeup.
+            #
             # Renamed from cluster-app-yaml.yaml, content reshaped from flat app.yaml fields to
             # the nested platformIdentity: schema (2026-08-18) - the two files this catalog wrote
             # per app were "almost identical, one a subset of the other," sitting side by side in
@@ -347,7 +351,7 @@ spec:
               name: <<$xrName>>-cluster-identity-yaml
               annotations:
                 <<setResourceNameAnnotation "cluster-identity-yaml">>
-                crossplane.io/external-name: <<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/identity.yaml" $appName)>>
+                crossplane.io/external-name: "<<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/identity.yaml" $appName)>>"
             spec:
               managementPolicies: ["Create", "Update", "Observe", "LateInitialize"]
               providerConfigRef:
@@ -385,6 +389,10 @@ spec:
             # THIS XR reconciles - a pure git commit, same as everything else this XRD
             # already does.
             #
+            # Both external-name values below are double-quoted (fixed 2026-09-04) - the unquoted
+            # "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML. Real, fleet-wide
+            # live bug - see springbootapplication's own src-repo.yaml for the full writeup.
+            #
             # Both resources are wrapped in the SAME $clusterOk gate as this Composition's
             # other resources (00-cluster-gate.yaml) - no secrets infrastructure is
             # requested for a cluster that isn't real/ready either.
@@ -414,7 +422,7 @@ spec:
               name: <<$xrName>>-secretstore-shared-xr
               annotations:
                 <<setResourceNameAnnotation "secretstore-shared-xr">>
-                crossplane.io/external-name: <<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/xr-requests/secretstore-shared.yaml" $appName)>>
+                crossplane.io/external-name: "<<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/xr-requests/secretstore-shared.yaml" $appName)>>"
             spec:
               providerConfigRef:
                 kind: ClusterProviderConfig
@@ -440,7 +448,7 @@ spec:
               name: <<$xrName>>-secretstore-env-xr
               annotations:
                 <<setResourceNameAnnotation "secretstore-env-xr">>
-                crossplane.io/external-name: <<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/xr-requests/secretstore-%s.yaml" $appName $env)>>
+                crossplane.io/external-name: "<<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/xr-requests/secretstore-%s.yaml" $appName $env)>>"
             spec:
               providerConfigRef:
                 kind: ClusterProviderConfig
@@ -474,6 +482,10 @@ spec:
             # platformIdentity: shape that sibling file uses (see cluster-identity-yaml.yaml's own
             # header, and nodejsapplication's cicd-identity-yaml.yaml, for why THAT file's schema
             # consolidated app.yaml into itself 2026-08-18) - nothing here reads
+            # That external-name value below is double-quoted (fixed 2026-09-04) - the unquoted
+            # "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML. Real, fleet-wide
+            # live bug - see springbootapplication's own src-repo.yaml for the full writeup.
+            #
             # .platformIdentity.*, forcing that wrapper on would just be cosmetic. gitopsRepoUrl
             # IS now bare (no .git suffix), same system-wide convention as every other copy of
             # this URL, even though this file's own consumer (idp's tenant-onboarding
@@ -501,7 +513,7 @@ spec:
               name: <<$xrName>>-tenant-identity-yaml
               annotations:
                 <<setResourceNameAnnotation "tenant-identity-yaml">>
-                crossplane.io/external-name: <<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/%s/identity.yaml" $appName $env)>>
+                crossplane.io/external-name: "<<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/%s/identity.yaml" $appName $env)>>"
             spec:
               providerConfigRef:
                 kind: ClusterProviderConfig
@@ -561,6 +573,11 @@ spec:
             # rollout: null again. This is the highest-stakes file in the whole catalog to get this
             # wrong - it's what's actually deployed. Setting external-name makes the MR adopt the
             # existing file on rebuild instead of re-Creating over it.
+            #
+            # That external-name value below is double-quoted (fixed 2026-09-04) - the unquoted
+            # "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML. Real, fleet-wide
+            # live bug (every app-scaffolding composition in this catalog was Synced: False from
+            # this) - see springbootapplication's own src-repo.yaml for the full writeup.
             <<- if $clusterOk >>
             apiVersion: repo.github.m.upbound.io/v1alpha1
             kind: RepositoryFile
@@ -568,7 +585,7 @@ spec:
               name: <<$xrName>>-values-yaml
               annotations:
                 <<setResourceNameAnnotation "values-yaml">>
-                crossplane.io/external-name: <<printf "%s:%s:" (printf "gitops-%s" $appName) (printf "%s/%s/values.yaml" $cluster $env)>>
+                crossplane.io/external-name: "<<printf "%s:%s:" (printf "gitops-%s" $appName) (printf "%s/%s/values.yaml" $cluster $env)>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:

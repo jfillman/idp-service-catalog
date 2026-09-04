@@ -10,6 +10,11 @@
 # scans raw text for the delimiter pair regardless of YAML comment syntax, and an
 # accidental empty action fails the whole render (hit live building this template).
 #
+# Every crossplane.io/external-name value below is double-quoted (fixed 2026-09-04) -
+# the unquoted "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML.
+# Real, fleet-wide live bug (every app on kiac-dev was Synced: False from this) - see
+# springbootapplication's own copy of this file for the full writeup.
+#
 # repo.github.m.upbound.io (namespaced managed resources), not the Cluster-scoped
 # repo.github.upbound.io family - see provider-github-config.yaml's own header for why
 # (Crossplane v2 refuses to let a namespaced XR compose a Cluster-scoped resource at
@@ -109,7 +114,7 @@ metadata:
   name: <<$xrName>>-src-package-json
   annotations:
     <<setResourceNameAnnotation "src-repo-package-json">>
-    crossplane.io/external-name: <<printf "%s:package.json:" $xrName>>
+    crossplane.io/external-name: "<<printf "%s:package.json:" $xrName>>"
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
@@ -140,7 +145,7 @@ metadata:
   name: <<$xrName>>-src-index-js
   annotations:
     <<setResourceNameAnnotation "src-repo-index-js">>
-    crossplane.io/external-name: <<printf "%s:index.js:" $xrName>>
+    crossplane.io/external-name: "<<printf "%s:index.js:" $xrName>>"
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
@@ -176,7 +181,7 @@ metadata:
   name: <<$xrName>>-src-dockerfile
   annotations:
     <<setResourceNameAnnotation "src-repo-dockerfile">>
-    crossplane.io/external-name: <<printf "%s:Dockerfile:" $xrName>>
+    crossplane.io/external-name: "<<printf "%s:Dockerfile:" $xrName>>"
   # `apk upgrade` (picks up already-published Alpine package patches, e.g. libssl3/
   # libcrypto3) and removing npm's own bundled /usr/local/lib/node_modules/npm - real
   # HIGH-severity CVEs hit live scanning checkout-api's scaffolded image (brace-
@@ -214,7 +219,7 @@ metadata:
   name: <<$xrName>>-src-gitignore
   annotations:
     <<setResourceNameAnnotation "src-repo-gitignore">>
-    crossplane.io/external-name: <<printf "%s:.gitignore:" $xrName>>
+    crossplane.io/external-name: "<<printf "%s:.gitignore:" $xrName>>"
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:
@@ -236,7 +241,7 @@ metadata:
   name: <<$xrName>>-src-readme
   annotations:
     <<setResourceNameAnnotation "src-repo-readme">>
-    crossplane.io/external-name: <<printf "%s:README.md:" $xrName>>
+    crossplane.io/external-name: "<<printf "%s:README.md:" $xrName>>"
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:

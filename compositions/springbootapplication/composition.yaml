@@ -240,6 +240,14 @@ spec:
             # composition's order-api had its version bump and its home() response reverted by a
             # same-day cluster recreate (2026-09-02), the identical root cause as checkout-api's
             # lost package.json edits.
+            #
+            # Every one of those external-name values below is double-quoted (fixed 2026-09-04) -
+            # the unquoted "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML
+            # (a plain scalar can't end a line on ":", the decoder reads it as opening a nested
+            # mapping). Real, fleet-wide live bug: every app built by this pattern - nodejsapplication,
+            # goapplication, pythonapplication, applicationenvironment, and this composition - had
+            # Synced: False with "mapping values are not allowed in this context" on kiac-dev,
+            # found while investigating order-api's own SpringBootApplication XR.
             <<- $xrName := .observed.composite.resource.metadata.name >>
             <<- $spec := .observed.composite.resource.spec >>
             <<- $description := $spec.description | default (printf "%s - a Spring Boot application" $xrName) >>
@@ -285,7 +293,7 @@ spec:
               name: <<$xrName>>-src-build-gradle
               annotations:
                 <<setResourceNameAnnotation "src-repo-build-file">>
-                crossplane.io/external-name: <<printf "%s:build.gradle:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:build.gradle:" $xrName>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -327,7 +335,7 @@ spec:
               name: <<$xrName>>-src-pom-xml
               annotations:
                 <<setResourceNameAnnotation "src-repo-build-file">>
-                crossplane.io/external-name: <<printf "%s:pom.xml:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:pom.xml:" $xrName>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -389,7 +397,7 @@ spec:
               name: <<$xrName>>-src-application-java
               annotations:
                 <<setResourceNameAnnotation "src-repo-application-java">>
-                crossplane.io/external-name: <<printf "%s:%s:" $xrName (printf "src/main/java/%s/Application.java" $packagePath)>>
+                crossplane.io/external-name: "<<printf "%s:%s:" $xrName (printf "src/main/java/%s/Application.java" $packagePath)>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -428,7 +436,7 @@ spec:
               name: <<$xrName>>-src-application-properties
               annotations:
                 <<setResourceNameAnnotation "src-repo-application-properties">>
-                crossplane.io/external-name: <<printf "%s:src/main/resources/application.properties:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:src/main/resources/application.properties:" $xrName>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -450,7 +458,7 @@ spec:
               name: <<$xrName>>-src-dockerfile
               annotations:
                 <<setResourceNameAnnotation "src-repo-dockerfile">>
-                crossplane.io/external-name: <<printf "%s:Dockerfile:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:Dockerfile:" $xrName>>"
               # Multi-stage: build stage carries a full JDK plus the build tool (installed via apk,
               # no bundled wrapper script - deliberately narrower than Maven/Gradle wrapper scaffolding,
               # matching this catalog's "deliberately narrow" scope elsewhere), final stage is a bare
@@ -501,7 +509,7 @@ spec:
               name: <<$xrName>>-src-gitignore
               annotations:
                 <<setResourceNameAnnotation "src-repo-gitignore">>
-                crossplane.io/external-name: <<printf "%s:.gitignore:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:.gitignore:" $xrName>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:
@@ -528,7 +536,7 @@ spec:
               name: <<$xrName>>-src-readme
               annotations:
                 <<setResourceNameAnnotation "src-repo-readme">>
-                crossplane.io/external-name: <<printf "%s:README.md:" $xrName>>
+                crossplane.io/external-name: "<<printf "%s:README.md:" $xrName>>"
             spec:
               managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
               providerConfigRef:

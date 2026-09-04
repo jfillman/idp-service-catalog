@@ -38,6 +38,11 @@
 # rollout: null again. This is the highest-stakes file in the whole catalog to get this
 # wrong - it's what's actually deployed. Setting external-name makes the MR adopt the
 # existing file on rebuild instead of re-Creating over it.
+#
+# That external-name value below is double-quoted (fixed 2026-09-04) - the unquoted
+# "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML. Real, fleet-wide
+# live bug (every app-scaffolding composition in this catalog was Synced: False from
+# this) - see springbootapplication's own src-repo.yaml for the full writeup.
 <<- if $clusterOk >>
 apiVersion: repo.github.m.upbound.io/v1alpha1
 kind: RepositoryFile
@@ -45,7 +50,7 @@ metadata:
   name: <<$xrName>>-values-yaml
   annotations:
     <<setResourceNameAnnotation "values-yaml">>
-    crossplane.io/external-name: <<printf "%s:%s:" (printf "gitops-%s" $appName) (printf "%s/%s/values.yaml" $cluster $env)>>
+    crossplane.io/external-name: "<<printf "%s:%s:" (printf "gitops-%s" $appName) (printf "%s/%s/values.yaml" $cluster $env)>>"
 spec:
   managementPolicies: ["Create", "Observe", "LateInitialize", "Delete"]
   providerConfigRef:

@@ -10,6 +10,10 @@
 # platformIdentity: shape that sibling file uses (see cluster-identity-yaml.yaml's own
 # header, and nodejsapplication's cicd-identity-yaml.yaml, for why THAT file's schema
 # consolidated app.yaml into itself 2026-08-18) - nothing here reads
+# That external-name value below is double-quoted (fixed 2026-09-04) - the unquoted
+# "<repo>:<file>:" scalar's trailing bare colon is invalid plain-YAML. Real, fleet-wide
+# live bug - see springbootapplication's own src-repo.yaml for the full writeup.
+#
 # .platformIdentity.*, forcing that wrapper on would just be cosmetic. gitopsRepoUrl
 # IS now bare (no .git suffix), same system-wide convention as every other copy of
 # this URL, even though this file's own consumer (idp's tenant-onboarding
@@ -37,7 +41,7 @@ metadata:
   name: <<$xrName>>-tenant-identity-yaml
   annotations:
     <<setResourceNameAnnotation "tenant-identity-yaml">>
-    crossplane.io/external-name: <<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/%s/identity.yaml" $appName $env)>>
+    crossplane.io/external-name: "<<printf "%s:%s:" $tenantsRepo (printf "tenants/%s/%s/identity.yaml" $appName $env)>>"
 spec:
   providerConfigRef:
     kind: ClusterProviderConfig
